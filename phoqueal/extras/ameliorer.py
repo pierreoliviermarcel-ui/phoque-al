@@ -393,7 +393,7 @@ def open_dialog(main, vids):
     note.setStyleSheet("color:#8a8a96")
     lay.addWidget(note)
     bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-    bb.button(QDialogButtonBox.Ok).setText("Lancer")
+    bb.button(QDialogButtonBox.Ok).setText("Démarrer")
     bb.accepted.connect(d.accept)
     bb.rejected.connect(d.reject)
     lay.addWidget(bb)

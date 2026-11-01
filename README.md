@@ -2,89 +2,91 @@
 
 **Your local video library, streaming-style — on as many screens as you have.**
 
+![Phoque Al home page](docs/images/home.jpg)
+
 Phoque Al is a free, open-source Windows application that turns the folders of videos on your drives into a
-streaming-service-like library: a home page with a featured banner, rows by theme, resume where you left off,
-favourites and recommendations. It is built for people who watch on several screens at once, who like their
-videos cut to music, and who want everything to stay private on their own computer.
+streaming-service-like library, then plays them on up to nine screens at once — with music-synced montages, a
+phone remote and local AI tools. No account, no cloud, no telemetry: everything stays on your PC.
 
-No account, no cloud, no telemetry: your library, your history and your settings never leave your PC.
-
-> The interface is available in **English, French, Spanish and German** (⋯ → *Langue / Language*).
+[**⬇ Download for Windows**](../../releases/latest) · [**📖 User guide**](docs/USER_GUIDE.md) ·
+English · Français · Español · Deutsch
 
 ---
 
-## Features
+## Highlights
 
-### Library
-- **Streaming-style home page**: animated featured banner with live video previews, then rows in a sensible
-  order — *Resume*, *Favourites*, *Recommended for you*, *Playlists*, *Evenings*, *Moments*, *Top rated*,
-  *People & tags*, *Recently added*, *Photo albums* and one row per theme (each sub-folder is a theme).
-- **Hover previews** (video or animated thumbnails), automatic thumbnails, durations, play counts.
-- **External drives done right**: drives are recognised by their serial number, so the library survives a change
-  of drive letter, and videos simply show as unavailable while a drive is unplugged.
-- **People & tags from file names**: the app proposes names and tags found in your file names; whatever you
-  confirm is then recognised everywhere (even when words are glued together), with aliases and merging.
-- **AI tag suggestions** (optional, fully local): a CLIP model looks at a few frames of each video and proposes
-  tags from a list you can edit. It learns from what you accept or reject. Nothing is applied without your
-  consent unless you allow it above a confidence threshold.
-- **Ratings (1–5 stars), likes, playlists, favourite themes**, search by title, studio, theme or person.
-- **Photo albums**: image folders and ZIP / RAR / CBZ / CBR archives, optionally mixed into themes and montages.
-- **Duplicate finder**: exact duplicates and *visual* duplicates (same video in different qualities); the best
-  copy is kept, the others go to a recycle folder — nothing is ever deleted without confirmation.
-- **Statistics**: what you watch, when, your most watched themes and people.
+### A home page you actually want to browse
+A featured banner with live previews, *Resume*, *Favourites*, *Recommended for you*, playlists, top rated,
+people & tags, recently added — and one row per theme (each sub-folder is a theme). Hover a thumbnail for a
+preview, right-click it for everything else.
 
-### Playback on many screens
-- **Up to 9 screens at once**, each with its own player, plus a screen picker on a **mini-map** of your real
-  screen layout when there are 4 screens or more.
-- **Mosaics**: 2 to 16 videos on one screen, each with its own sound, volume and controls; save and reload them.
-- **Video wall**: one video spread across several screens, with bezel compensation and a test pattern to
-  align them.
-- **Screen groups**, *shift videos to the next screen*, *play on all screens*, per-screen or global controls.
-- **Evenings**: save the whole setup (what plays where, mosaics, music, montage) and relaunch it in one click.
-- Fill / crop / aspect-ratio modes per screen (16:9, 21:9, 4:3, 9:16…), **blurred background** for videos that
-  don't fill the screen, transitions between videos, loop / shuffle / next-in-theme.
-- **Scene detection** (jump to next scene), **favourite moments** (mark an instant, replay all your moments as
-  a reel), **highlights** (the most intense passages, found from motion and sound).
+![Right-click menu](docs/images/card-menu.jpg)
 
-### Music
-- **Background music player** for a music folder, with its own volume.
-- **Beat montage**: the videos on screen change on the beats of the music, faster when the music builds up.
-- **Neon beat bar**: a cyberpunk-style animated bar under music videos that follows the detected beat
-  (several styles, adjustable offset).
-- **Music-video generator**: pick a track and some videos; the app cuts them on the beat with 8 styles
-  (classic, stutter, split screen, 2×2 grid, mirror, pulse, speed ramps, mix). The result has three audio
-  tracks: *mix*, *music only* and *video sounds only*.
-- **Automatic ducking**: while your own music plays, music videos switch to their "video sounds only" track (or
-  are lowered/muted), so two songs never play over each other.
-- **AI music removal** (optional, local): an MDX-Net model separates the music from voices and other sounds of
-  an existing video, so the ducking can keep the voices.
-- **Sessions**: timed programmes with phases (calm, build-up, intense, slow-down, pauses…) that drive the montage
-  speed and volume, with an on-screen timer.
+### Built for several screens
+Up to **9 screens** playing different videos at the same time, a mini-map to pick a screen, keys `1`–`9` to jump
+between players, global controls with `Shift`, and one-key *shift every video to the next screen*.
+**Mosaics** put 2 to 16 videos on one screen; the **video wall** spreads one video across several screens with
+bezel compensation; **Evenings** save and relaunch a whole setup in one click.
 
-### Picture
-- **AI upscaling** (optional): Real-ESRGAN, running on your graphics card (NVIDIA, AMD or Intel via Vulkan),
-  enlarges and cleans low-quality videos (blur, noise, compression blocks). A 30-second test comes first; the
-  result is a new "[HD]" file next to the original, which is never modified. Processing resumes after a restart.
+![A 2 × 2 mosaic](docs/images/mosaic.jpg)
 
-### Control
-- **Phone / tablet remote** in the browser (same Wi-Fi, QR code + PIN, no app to install): screens, library,
-  playlists, music, sessions — with a one-hand portrait mode and a tablet grid layout.
-- **Satellite PCs**: another computer running Phoque Al on the network adds its screens and its library.
-- **Game controller** (Xbox / XInput) and fully **remappable keyboard shortcuts**.
-- **Discreet mode** (no thumbnails, neutral titles) and a **panic key** (F12: everything paused and hidden).
-- **Start with Windows** (optional), minimised and in discreet mode.
+### Everything moves with the music
+Play your own music and the **beat montage** changes the videos on the beat, faster when the track builds up.
+A **neon beat bar** pulses under music videos. **Sessions** run timed programmes (calm → intense → cool-down…)
+with an on-screen timer.
+
+![Neon beat bar and session timer](docs/images/beat-bar-session.jpg)
+
+### Make your own music videos
+Pick a track and some videos — or your favourite moments, or the automatically detected highlights — and the
+generator cuts them on the beat in 8 styles (stutter, split screen, grid, mirror, pulse, speed ramps…), with zoom
+punches, glitches and neon colours. The result has separate *music* and *video sounds* audio tracks.
+
+<img src="docs/images/music-video-generator.jpg" alt="Music-video generator" width="560">
+
+### Local AI tools — optional, private, on your own PC
+| | |
+|---|---|
+| **Tag suggestions** | A CLIP model watches a few frames of each video and proposes tags from *your* list; it learns from what you accept. |
+| **Music removal** | An MDX-Net model separates the music from voices in existing videos, so they never clash with your own music. |
+| **Picture enhancement** | Real-ESRGAN on your graphics card upscales and cleans low-quality videos into a new "[HD]" file. |
+
+<img src="docs/images/ai-upscale.jpg" alt="AI picture enhancement" width="400">
+
+### Control it from the couch
+A **phone / tablet remote** in the browser — no app to install, QR code + PIN — with a one-hand portrait mode
+and a full multi-screen tablet layout. Also: Xbox-compatible **game controllers**, **satellite PCs** that add
+their screens and library over the network, and fully remappable keyboard shortcuts.
+
+<p>
+<img src="docs/images/phone-remote.jpg" alt="Phone remote" width="260">
+&nbsp;
+<img src="docs/images/tablet-remote.jpg" alt="Tablet remote" width="540">
+</p>
+
+### Private by design
+**Discreet mode** (no thumbnails, neutral titles, on the PC and the phone), a **panic key** (`F12`: everything
+paused and hidden), optional start with Windows minimised and discreet. Your library, history and AI models live
+in the program's own `data` folder; nothing is ever uploaded.
+
+### And also
+Favourite moments and reels · highlight detection · scene detection · transitions · 1–5 star ratings ·
+playlists · people & tags from file names · photo albums (folders, ZIP / RAR / CBZ) · exact and visual duplicate
+finder · statistics · blurred-background fill and crop modes for any screen shape · external drives recognised by
+serial number.
+
+👉 Every feature is explained step by step in the [**user guide**](docs/USER_GUIDE.md).
 
 ---
 
 ## Installation
 
-1. Download `PhoqueAl_Setup.exe` from the [Releases](../../releases) page.
-2. Run it — no administrator rights are needed (per-user install). VLC and FFmpeg are included.
-3. Open *Settings → Library → Add a source folder* and pick your video folders.
+1. Download `PhoqueAl_Setup.exe` from the [latest release](../../releases/latest).
+2. Run it — no administrator rights needed. VLC and FFmpeg are included.
+3. Open **⋯ → Settings → Library → Add a source folder…** and pick your video folders.
 
-Optional AI features download their model the first time you use them (from GitHub or Hugging Face).
-
-**Requirements**: Windows 10 or 11, 64-bit. A graphics card with Vulkan support is recommended for AI upscaling.
+**Requirements**: Windows 10 or 11, 64-bit. A Vulkan-capable graphics card for AI picture enhancement.
+AI models are downloaded the first time you use a feature (from GitHub or Hugging Face).
 
 ## Running from source
 
@@ -94,31 +96,29 @@ cd phoque-al
 lancer_phoqueal.bat
 ```
 
-You need Python 3.11+ and VLC (64-bit) installed; FFmpeg must be on the `PATH` (e.g. `winget install Gyan.FFmpeg`).
-To build the installer yourself: `build_windows.bat` (PyInstaller + Inno Setup).
-
-### Project layout
+Needs Python 3.11+, VLC 64-bit, and FFmpeg on the `PATH` (`winget install Gyan.FFmpeg`).
+`build_windows.bat` builds the installer (PyInstaller + Inno Setup).
 
 | Path | Content |
 |---|---|
-| `phoqueal/` | the application (PySide6 UI, libVLC players, SQLite library) |
-| `phoqueal/extras/` | optional features, each in its own module, installed at start-up without touching the core |
+| `phoqueal/` | the application: PySide6 interface, libVLC players, SQLite library |
+| `phoqueal/extras/` | optional features, one module each, plugged in at start-up |
 | `phoqueal/extras/i18n.py`, `i18n_data.py` | runtime translation (French source strings → EN / ES / DE) |
-| `docs/notice_source.py` | generates the PDF user guide (French) |
+| `docs/` | user guide, screenshots, PDF guide generator (French) |
 | `installer/` | Inno Setup script |
-| `tools/download_models.py` | pre-downloads the AI models (for offline machines) |
+| `tools/download_models.py` | pre-downloads the AI models for offline machines |
 
 ## Contributing
 
-Contributions are welcome: bug reports, translations, new features, packaging for other systems.
-Fork the repository, make your changes on a branch and open a pull request. The source strings are in French;
-to add or fix a translation, edit `phoqueal/extras/i18n_data.py`.
+Bug reports, translations and pull requests are welcome. Fork, work on a branch, open a pull request.
+Source strings are in French; to add or fix a translation, edit `phoqueal/extras/i18n_data.py`
+(`French text: (English, Spanish, German)`). A new feature usually fits in a new module in `phoqueal/extras/`.
 
 ## License
 
-Phoque Al is free software released under the **GNU General Public License v3.0 or later** — see [LICENSE](LICENSE).
-You may use, study, modify and redistribute it; modified versions you distribute must remain under the GPL.
+**GNU General Public License v3.0 or later** — see [LICENSE](LICENSE). You may use, study, modify and share it;
+distributed modified versions must stay under the GPL.
+Third-party components keep their own licenses: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Third-party components keep their own licenses — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-Phoque Al is a media player and organiser for your own files; it does not provide, download or host any videos.
+Phoque Al plays and organises your own files; it does not provide, download or host any videos.
+Screenshots show generated demo content.

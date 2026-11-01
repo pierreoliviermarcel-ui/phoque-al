@@ -21,6 +21,7 @@ REV = {}           # traduction -> francais
 PATTERNS = []      # (regex, [morceaux du modele traduit], [types])
 CACHE = {}
 RDYN = {}          # traductions déjà faites -> texte d'origine
+UPPER = {}         # versions en majuscules
 _PH = re.compile(r"%%|%[-+ 0#]*\d*(?:\.\d+)?[sdfg]")
 _SKIP = {"Phoque Al", "PHOQUE AL"}
 
@@ -65,7 +66,7 @@ def _split_template(t):
 
 
 def load(lang):
-    TR.clear(); REV.clear(); CACHE.clear(); RDYN.clear(); del PATTERNS[:]
+    TR.clear(); REV.clear(); CACHE.clear(); RDYN.clear(); UPPER.clear(); del PATTERNS[:]
     STATE["lang"] = lang
     if lang == "fr":
         return
@@ -153,6 +154,14 @@ def _tr(text):
             out = [tr(x) for x in parts]
             if out != parts:
                 return sep.join(out)
+    # texte mis en majuscules à l'affichage (« THÈME À DÉCOUVRIR »)
+    if text.upper() == text and any(c.isalpha() for c in text):
+        if not UPPER:
+            for k, v in TR.items():
+                UPPER.setdefault(k.upper(), v.upper())
+        t = UPPER.get(text)
+        if t is not None:
+            return t
     return text
 
 

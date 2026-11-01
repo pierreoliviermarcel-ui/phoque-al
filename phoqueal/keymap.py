@@ -71,13 +71,26 @@ def save(conn, mapping):
 
 
 def conflicts(mapping):
-    """Touches attribuees a plusieurs actions : {touche: [libelles]}."""
+    """Touches attribuees a plusieurs actions qui peuvent se gener : {touche: [libelles]}.
+    Une touche peut servir a la fois sur l'accueil et dans les lecteurs (fenetres differentes) ;
+    les touches « partout » et « musique » entrent en conflit avec tout."""
     labels = {a[0]: a[2] for a in ACTIONS}
+    ctx = {a[0]: a[1] for a in ACTIONS}
+    wide = ("global", "music")
+
+    def clash(a, b):
+        return a == b or a in wide or b in wide or {a, b} <= {"player", "mosaic"}
+
     seen = {}
     for k, seq in mapping.items():
-        if seq:
-            seen.setdefault(seq, []).append(labels[k])
-    return {seq: names for seq, names in seen.items() if len(names) > 1}
+        if seq and k in labels:
+            seen.setdefault(seq, []).append(k)
+    out = {}
+    for seq, keys in seen.items():
+        bad = [k for k in keys if any(j != k and clash(ctx[k], ctx[j]) for j in keys)]
+        if len(bad) > 1:
+            out[seq] = [labels[k] for k in bad]
+    return out
 
 
 def pretty(seq):
