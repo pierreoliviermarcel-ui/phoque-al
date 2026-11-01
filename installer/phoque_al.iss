@@ -2,8 +2,8 @@
 [Setup]
 AppId={{4D6CC492-76DA-4443-8C6F-6170DF987F16}
 AppName=Phoque Al
-AppVersion=2.4
-AppVerName=Phoque Al 2.4
+AppVersion=2.5
+AppVerName=Phoque Al 2.5
 AppPublisher=Phoque Al contributors
 AppPublisherURL=https://github.com/pierreoliviermarcel-ui/phoque-al
 DefaultDirName={localappdata}\Programs\Phoque Al
