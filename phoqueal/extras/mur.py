@@ -4,11 +4,14 @@
   l'écran, modifiable en cm) ; on le glisse à sa vraie place. L'espace entre deux écrans (cadres)
   est compté comme de l'image cachée : les lignes restent droites d'un écran à l'autre.
 - La mire de test se met à jour en direct pendant qu'on déplace les écrans.
+- Format forcé : par écran (16:9, 16:10, 21:9, 4:3…, ou diagonale en pouces) quand Windows annonce
+  une mauvaise taille ; pour la vidéo aussi (pixels non carrés des DVD, vidéos mal étiquetées).
 - Lecture : une seule décodeuse VLC ; chaque écran affiche son morceau. Son normal.
   Espace pause · ←/→ 10 s · ↑/↓ volume · M muet · Échap fermer · touche panique.
 """
 import ctypes
 import json
+import math
 import re
 import subprocess
 import sys
@@ -54,6 +57,47 @@ def piece(src, vw, vh, tw, th):
     fx, fy = tw / sw, th / sh
     return ((ix0, iy0, ix1 - ix0, iy1 - iy0),
             ((ix0 - sx) * fx, (iy0 - sy) * fy, (ix1 - ix0) * fx, (iy1 - iy0) * fy))
+
+
+SCREEN_RATIOS = [("auto", "Automatique (lu par Windows)"), ("16:9", "16:9"), ("16:10", "16:10"),
+                 ("21:9", "21:9 (ultra-large)"), ("32:9", "32:9 (super ultra-large)"), ("4:3", "4:3"),
+                 ("5:4", "5:4"), ("3:2", "3:2"), ("9:16", "9:16 (vertical)"), ("10:16", "10:16 (vertical)"),
+                 ("free", "Libre (largeur et hauteur séparées)")]
+VIDEO_RATIOS = [("auto", "Automatique (format de la vidéo)"), ("16:9", "16:9"), ("4:3", "4:3"),
+                ("21:9", "21:9 / 2,39:1 (cinéma)"), ("1.85", "1,85:1 (cinéma)"), ("16:10", "16:10"),
+                ("1:1", "1:1 (carré)"), ("9:16", "9:16 (vertical)")]
+_NAMED = {"21:9": 64 / 27, "1.85": 1.85}
+
+
+def ratio_of(key):
+    """'16:9' -> 1.777… ; 'auto' / 'free' / inconnu -> None."""
+    if key in _NAMED:
+        return _NAMED[key]
+    try:
+        a, b = key.split(":")
+        return float(a) / float(b)
+    except Exception:
+        return None
+
+
+def pixel_ratio(screen):
+    g = screen.geometry()
+    return g.width() / g.height() if g.height() > 0 else None
+
+
+def size_for(ratio, w=None, h=None, diag_in=None):
+    """Largeur / hauteur (cm) d'après un format et une largeur, une hauteur ou une diagonale (pouces)."""
+    if diag_in:
+        d = diag_in * 2.54
+        w = d * ratio / math.sqrt(1 + ratio * ratio)
+        return round(w, 1), round(w / ratio, 1)
+    if w is not None:
+        return round(w, 1), round(w / ratio, 1)
+    return round(h * ratio, 1), round(h, 1)
+
+
+def diag_in(w, h):
+    return math.hypot(w, h) / 2.54
 
 
 def physical_cm(screen):
@@ -174,9 +218,14 @@ def video_size(path):
         try:
             out = subprocess.run([ff, "-hide_banner", "-i", path], capture_output=True, text=True,
                                  errors="replace", timeout=20, creationflags=_FLAGS).stderr
-            m = re.search(r"Stream #.*?Video:.*?\b(\d{2,5})x(\d{2,5})\b", out)
+            m = re.search(r"Stream #.*?Video:.*?\b(\d{2,5})x(\d{2,5})\b(.*)", out)
             if m:
                 w, h = int(m.group(1)), int(m.group(2))
+                dar = re.search(r"DAR (\d+):(\d+)", m.group(3))          # pixels non carrés (DVD…)
+                if dar and int(dar.group(2)) > 0:
+                    r = int(dar.group(1)) / int(dar.group(2))
+                    if 0.2 < r < 5 and abs(w / h - r) > 0.01:
+                        w = int(round(h * r))
                 rot = re.search(r"rotat(?:e|ion)\s*[:=]\s*(-?\d+)", out)
                 if rot and abs(int(rot.group(1))) % 180 == 90:
                     w, h = h, w
@@ -189,9 +238,11 @@ def video_size(path):
 class VideoFrames:
     """Une seule lecture VLC qui écrit ses images dans une mémoire partagée par les écrans."""
 
-    def __init__(self, path, start=0.0, volume=80):
+    def __init__(self, path, start=0.0, volume=80, ratio=None):
         import vlc
         w, h = video_size(path)
+        if ratio:                                             # format forcé : VLC étire l'image
+            w = int(round(h * ratio))
         if w > 3840:                                          # limite raisonnable pour le processeur
             h, w = int(h * 3840 / w), 3840
         self.w, self.h = w - w % 2, h - h % 2
@@ -454,7 +505,8 @@ def play(main, vid, wall=None):
     stop_current()
     free_screens(main, wall)
     try:
-        src = VideoFrames(path, 0, int(db.get_setting(main.conn, "wall_volume", "80") or 80))
+        src = VideoFrames(path, 0, int(db.get_setting(main.conn, "wall_volume", "80") or 80),
+                          ratio_of(wall.get("vr", "auto")))
     except Exception as e:
         log("mur : %r" % e)
         QMessageBox.warning(main, "Mur d'écrans", "Lecture impossible : %s" % e)
@@ -576,6 +628,16 @@ class Canvas(QWidget):
             self.dlg.changed()
 
 
+def ratio_name(r):
+    """1.777 -> '16:9' (format courant le plus proche, sinon '1,78:1')."""
+    best = None
+    for k, _lab in SCREEN_RATIOS:
+        v = ratio_of(k)
+        if v and abs(v - r) / v < 0.02 and (best is None or abs(v - r) < abs(ratio_of(best) - r)):
+            best = k
+    return best or ("%.2f:1" % r).replace(".", ",")
+
+
 def snap(sc, k, x, y, tol):
     """Aimante un écran contre les autres (cadres compris) et aligne hauts / bas / centres."""
     s = sc[k]
@@ -629,12 +691,32 @@ class WallDialog(QDialog):
         for sp, lo, hi in ((self.sw, 5, 400), (self.sh, 5, 300), (self.sb, 0, 10)):
             sp.setRange(lo, hi); sp.setDecimals(1); sp.setSuffix(" cm"); sp.setSingleStep(0.5)
             sp.valueChanged.connect(self.edit)
+        self.ratio = QComboBox()
+        for k, lab in SCREEN_RATIOS:
+            self.ratio.addItem(lab, k)
+        self.ratio.setToolTip("Si l'image est écrasée ou étirée sur cet écran, force son vrai format")
+        self.ratio.currentIndexChanged.connect(self.edit_ratio)
+        self.sd = QDoubleSpinBox()
+        self.sd.setRange(5, 200); self.sd.setDecimals(1); self.sd.setSuffix(" pouces"); self.sd.setSingleStep(0.5)
+        self.sd.setToolTip("Diagonale de l'écran (sur la fiche ou l'étiquette) : calcule largeur et hauteur")
+        self.sw.valueChanged.disconnect(); self.sh.valueChanged.disconnect()
+        self.sw.valueChanged.connect(lambda _v: self.edit_dim("w"))
+        self.sh.valueChanged.connect(lambda _v: self.edit_dim("h"))
+        self.sd.valueChanged.connect(lambda _v: self.edit_dim("d"))
+        self.detected = QLabel()
+        self.detected.setStyleSheet("color:#8a8a96")
         self.inc = QCheckBox("Inclus dans le mur")
         self.inc.toggled.connect(self.edit)
+        f.addRow("Format", self.ratio)
+        f.addRow("Diagonale", self.sd)
         f.addRow("Largeur visible", self.sw)
         f.addRow("Hauteur visible", self.sh)
         f.addRow("Cadre (bordure)", self.sb)
-        f.addRow(self.inc)
+        f.addRow(self.detected)
+        ab = QPushButton("Même format pour tous les écrans")
+        ab.setToolTip("Applique le format de cet écran aux autres (leur largeur est gardée)")
+        ab.clicked.connect(self.ratio_all)
+        f.addRow(self.inc, ab)
         row.addWidget(g1)
         g2 = QGroupBox("Remplissage")
         v = QVBoxLayout(g2)
@@ -643,6 +725,15 @@ class WallDialog(QDialog):
         grp = QButtonGroup(self); grp.addButton(self.r_fill); grp.addButton(self.r_fit)
         self.r_fill.toggled.connect(lambda _on: self.changed())
         v.addWidget(self.r_fill); v.addWidget(self.r_fit)
+        hv = QHBoxLayout()
+        hv.addWidget(QLabel("Format de la vidéo :"))
+        self.vratio = QComboBox()
+        for k, lab in VIDEO_RATIOS:
+            self.vratio.addItem(lab, k)
+        self.vratio.setToolTip("Pour une vidéo écrasée ou étirée sur le mur (mauvaise information dans le fichier)")
+        self.vratio.currentIndexChanged.connect(lambda _i: self.loading or self.changed())
+        hv.addWidget(self.vratio, 1)
+        v.addLayout(hv)
         b = QPushButton("Placement automatique"); b.clicked.connect(self.auto); v.addWidget(b)
         row.addWidget(g2)
         lay.addLayout(row)
@@ -698,6 +789,10 @@ class WallDialog(QDialog):
         self.r_fill.blockSignals(True)
         (self.r_fill if w.get("fit", "fill") == "fill" else self.r_fit).setChecked(True)
         self.r_fill.blockSignals(False)
+        self.loading = True
+        i = self.vratio.findData(w.get("vr", "auto"))
+        self.vratio.setCurrentIndex(max(0, i))
+        self.loading = False
         self.select(next(iter(self.layout_cm), None))
         self.changed()
 
@@ -732,6 +827,19 @@ class WallDialog(QDialog):
             sp.setEnabled(s is not None)
             if s:
                 sp.setValue(s[f])
+        self.ratio.setEnabled(s is not None)
+        self.sd.setEnabled(s is not None)
+        if s:
+            self.ratio.setCurrentIndex(max(0, self.ratio.findData(s.get("r", "auto"))))
+            self.sd.setValue(round(diag_in(s["w"], s["h"]), 1))
+        scr = self.screen_obj(k)
+        if scr is not None:
+            g = scr.geometry()
+            dpr = scr.devicePixelRatio() or 1
+            pw, ph = int(round(g.width() * dpr)), int(round(g.height() * dpr))
+            self.detected.setText("Windows annonce %d × %d px (%s)" % (pw, ph, ratio_name(pw / ph if ph else 0)))
+        else:
+            self.detected.setText("")
         self.inc.setEnabled(s is not None)
         self.inc.setChecked(bool(s and s.get("on", True)))
         self.loading = False
@@ -745,6 +853,70 @@ class WallDialog(QDialog):
         s["on"] = self.inc.isChecked()
         self.changed()
 
+    # --- format des écrans
+    def screen_obj(self, k):
+        for scr in QApplication.screens():
+            if screen_key(scr) == k:
+                return scr
+        return None
+
+    def ratio_for(self, s, k):
+        """Format imposé à l'écran (largeur / hauteur), None si libre."""
+        key = s.get("r", "auto")
+        if key == "free":
+            return None
+        if key == "auto":
+            scr = self.screen_obj(k)
+            return pixel_ratio(scr) if scr is not None else None
+        return ratio_of(key)
+
+    def put(self, s):
+        """Recopie largeur / hauteur / diagonale dans les cases sans relancer les calculs."""
+        self.loading = True
+        self.sw.setValue(s["w"]); self.sh.setValue(s["h"])
+        self.sd.setValue(round(diag_in(s["w"], s["h"]), 1))
+        self.loading = False
+
+    def edit_dim(self, which):
+        if self.loading or self.sel not in self.layout_cm:
+            return
+        s = self.layout_cm[self.sel]
+        r = self.ratio_for(s, self.sel)
+        w, h = self.sw.value(), self.sh.value()
+        if which == "d":
+            r = r or (w / h if h else 16 / 9)                    # libre : garde les proportions actuelles
+            w, h = size_for(r, diag_in=self.sd.value())
+        elif r:
+            w, h = size_for(r, w=w) if which == "w" else size_for(r, h=h)
+        s["w"], s["h"] = max(5.0, min(400.0, w)), max(5.0, min(300.0, h))
+        self.put(s)
+        self.changed()
+
+    def edit_ratio(self, *_):
+        if self.loading or self.sel not in self.layout_cm:
+            return
+        s = self.layout_cm[self.sel]
+        s["r"] = self.ratio.currentData()
+        r = self.ratio_for(s, self.sel)
+        if r:                                                     # largeur gardée, hauteur recalculée
+            s["w"], s["h"] = size_for(r, w=s["w"])
+            if s["h"] > 300:
+                s["w"], s["h"] = size_for(r, h=300.0)
+        self.put(s)
+        self.changed()
+
+    def ratio_all(self):
+        if self.sel not in self.layout_cm:
+            return
+        key = self.layout_cm[self.sel].get("r", "auto")
+        for k, s in self.layout_cm.items():
+            s["r"] = key
+            r = self.ratio_for(s, k)
+            if r:
+                s["w"], s["h"] = size_for(r, w=s["w"])
+        self.select(self.sel)
+        self.changed()
+
     def auto(self):
         w = self.wall()
         here = [s for s in QApplication.screens()]
@@ -756,8 +928,14 @@ class WallDialog(QDialog):
         if w is None:
             return
         w["fit"] = self.fit()
+        w["vr"] = self.vratio.currentData() or "auto"
+        r = ratio_of(w["vr"]) or 16 / 9
+        self.preview_size = (1920, int(round(1920 / r))) if r >= 1 else (int(round(1920 * r)), 1920)
         self.canvas.update()
         if self.preview is not None:
+            src = self.preview.source
+            if isinstance(src, Pattern) and (src.w, src.h) != self.preview_size:
+                self.preview.source = Pattern(*self.preview_size)
             self.preview.set_layout(w)
 
     # --- mire / identification
@@ -768,7 +946,7 @@ class WallDialog(QDialog):
                 self.mire.setChecked(False)
                 return
             stop_current()
-            pat = Pattern()
+            pat = Pattern(*self.preview_size)
             self.preview = WallSession(self.main, self.wall(), pat,
                                        label=lambda k: str(self.numbers().get(k, "")))
             SESSION = self.preview

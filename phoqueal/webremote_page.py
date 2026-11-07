@@ -271,6 +271,38 @@ body.split.many #screens .grid button{min-width:32px;min-height:34px;padding:0 3
 body.split.many #screens .grid button[data-cmd=seek]{display:none}
 body.split.many #screens .rvol .lab{display:none}
 body.split.many #screens input[type=range]{height:24px}
+/* ===== v2.5 : ecrans courts ===== */
+#oScreens{overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#oScreens>*{flex-shrink:0}
+#oScreens>.o-spacer{flex:1 1 0;min-height:0}
+.o-play{flex:none;width:clamp(66px,12dvh,98px);height:clamp(66px,12dvh,98px)}
+.o-b{flex:none;width:clamp(46px,7.4dvh,60px);height:clamp(46px,7.4dvh,60px)}
+.o-sq{width:clamp(44px,6.6dvh,54px);height:clamp(44px,6.6dvh,54px)}
+.o-pad{margin-bottom:clamp(8px,1.8dvh,16px)}
+.o-volrow{margin-bottom:clamp(6px,1.5dvh,14px)}
+.o-volrow input{height:clamp(38px,5.6dvh,48px)}
+.o-sel button{height:clamp(44px,7.2dvh,60px);min-width:0}
+.o-map button{min-height:0!important;min-width:0!important}
+.o-sel button b{font-size:clamp(16px,2.6dvh,20px)}
+@media (max-height:720px){
+  .o-hint{display:none}
+  .o-top{padding:8px 16px 4px}
+  .o-seekrow{margin-top:6px}
+  .o-seekrow input{height:36px}
+  .o-title{font-size:18px;-webkit-line-clamp:2}
+  .o-heart{width:44px;height:44px}
+  .o-nav{padding:6px 16px 8px}
+  .o-nav button{min-height:44px}
+  .o-sel button small{display:none}
+}
+@media (max-width:380px){
+  .o-page{padding:0 10px}
+  .o-pad{gap:4px}
+  .o-b{font-size:14px}
+  .o-sel{gap:6px}
+  .o-nav{gap:6px;padding-left:10px;padding-right:10px}
+  .o-nav button{font-size:13px;padding:0 4px}
+}
 </style>
 </head>
 <body>
@@ -458,7 +490,7 @@ function vibrate(){ try{ navigator.vibrate && navigator.vibrate(12); }catch(e){}
 
 async function api(path, body){
   const opt = {headers:{}, credentials:"same-origin"};
-  if (token) opt.headers["X-Phoque Al-Token"] = token;
+  if (token) opt.headers["X-PhoqueAl-Token"] = token;
   if (body !== undefined){ opt.method="POST"; opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
   const r = await fetch(path, opt);
   if (r.status === 401){ showLogin(); throw new Error("auth"); }

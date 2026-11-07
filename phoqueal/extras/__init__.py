@@ -20,11 +20,11 @@ def install(main):
     i18n.early(main)
     common.install_core(main)
 
-    from . import (accueil, ameliorer, autotags, demarrage, ecrans, forts, seance, sourdine, gamepad, moments, multiecrans, mur, plus, rythme, ratings, recommend, scenes, separation, soirees, stats,
-                   transitions, visualdupes)
+    from . import (accueil, ameliorer, apercu, autotags, pop, definition, demarrage, tri, ecrans, forts, seance, sourdine, gamepad, moments, multiecrans, mur, plus, rythme, ratings, recommend, scenes, separation, soirees, stats,
+                   taches, transitions, visualdupes)
     # l'ordre compte : rangees de l'accueil et boutons de la barre
     modules = [ecrans, multiecrans, soirees, recommend, moments, ratings, scenes, transitions, stats, visualdupes, gamepad,
-               plus, mur, rythme, autotags, seance, forts, separation, ameliorer, sourdine, demarrage, accueil]
+               plus, mur, rythme, autotags, seance, forts, separation, ameliorer, sourdine, demarrage, definition, tri, taches, apercu, pop, accueil]
 
     # touches supplementaires (modifiables dans Parametres -> Clavier)
     known = {a[0] for a in keymap.ACTIONS}

@@ -12,6 +12,7 @@ import os
 import queue
 import secrets
 import socket
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,27 +28,78 @@ COOKIE = "focal_t"
 # ----------------------------------------------------------------------------------------
 # Outils
 # ----------------------------------------------------------------------------------------
-def local_ips():
-    """Adresses IPv4 du PC sur le reseau local (la plus probable en premier)."""
-    ips = []
+def _adapters():
+    """[(ip, nom de la carte)] sous Windows (vide ailleurs ou en cas d'erreur)."""
+    if sys.platform != "win32":
+        return []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("10.255.255.255", 1))       # aucun paquet envoye : sert a trouver l'interface
-        ips.append(s.getsockname()[0])
-        s.close()
+        import subprocess
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { $_.IPAddress + '|' + $_.InterfaceAlias }"],
+                             capture_output=True, text=True, timeout=8, creationflags=0x08000000).stdout
+        return [tuple(l.strip().split("|", 1)) for l in out.splitlines() if "|" in l]
+    except Exception:
+        return []
+
+
+VIRTUAL = ("vethernet", "virtual", "vmware", "vbox", "virtualbox", "hyper-v", "wsl", "loopback", "tailscale",
+           "zerotier", "vpn", "tap-", "tun", "bluetooth", "docker", "npcap", "teredo")
+_IPCACHE = {"t": 0, "v": []}
+
+
+def local_ips_named():
+    """[(ip, nom)] du PC sur le réseau local, la plus probable en premier.
+    En tête : la carte qui mène à internet (box ou partage de connexion du téléphone) ;
+    en dernier : les cartes virtuelles (Hyper-V, WSL, VirtualBox, VPN…)."""
+    import time as _t
+    if _t.time() - _IPCACHE["t"] < 20 and _IPCACHE["v"]:
+        return list(_IPCACHE["v"])
+    names = {ip: name for ip, name in _adapters()}
+    first = []
+    for probe in ("8.8.8.8", "192.168.255.255", "10.255.255.255", "172.31.255.255"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((probe, 1))                  # aucun paquet envoyé : sert à trouver l'interface
+            first.append(s.getsockname()[0])
+            s.close()
+        except OSError:
+            pass
+    others = list(names)
+    try:
+        others += [i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
     except OSError:
         pass
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ips.append(info[4][0])
-    except OSError:
-        pass
+
+    def virtual(ip):
+        n = (names.get(ip) or "").lower()
+        return any(w in n for w in VIRTUAL)
+
+    def rank(ip):
+        if virtual(ip):
+            return 9
+        if ip.startswith("169.254."):
+            return 8                               # câble direct sans réseau (satellite) : gardé mais en dernier
+        if ip == (first[0] if first else None):
+            return 0
+        if ip.startswith("192.168."):
+            return 1
+        if ip.startswith("10."):
+            return 2
+        return 3
     out = []
-    for ip in ips:
-        if ip.startswith(("127.", "0.")) or ip in out:          # 169.254 = cable direct, garde
+    for ip in first + others:
+        if ip.startswith(("127.", "0.")) or ip in [o for o, _n in out]:
             continue
-        out.append(ip)
-    return out or ["127.0.0.1"]
+        out.append((ip, names.get(ip, "")))
+    out.sort(key=lambda x: rank(x[0]))
+    out = out or [("127.0.0.1", "")]
+    _IPCACHE.update(t=_t.time(), v=out)
+    return list(out)
+
+
+def local_ips():
+    """Adresses IPv4 du PC sur le réseau local (la plus probable en premier)."""
+    return [ip for ip, _n in local_ips_named()]
 
 
 def flag(p, which):
@@ -167,7 +219,7 @@ def make_handler(bridge):
             return {"Set-Cookie": "%s=%s; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict" % (COOKIE, token)}
 
         def token(self):
-            tok = self.headers.get("X-Phoque Al-Token", "") or (parse_qs(urlparse(self.path).query).get("t") or [""])[0]
+            tok = self.headers.get("X-PhoqueAl-Token", "") or (parse_qs(urlparse(self.path).query).get("t") or [""])[0]
             if not tok:
                 for part in self.headers.get("Cookie", "").split(";"):
                     k, _, v = part.strip().partition("=")
@@ -796,8 +848,8 @@ def PhoneDialog(main):
     body.addWidget(qr)
     side = QVBoxLayout()
     ip_box = QComboBox()
-    for ip in local_ips():
-        ip_box.addItem(ip, ip)
+    for ip, name in local_ips_named():
+        ip_box.addItem("%s  —  %s" % (ip, name) if name else ip, ip)
     url_lab = QLabel()
     url_lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
     url_lab.setWordWrap(True)

@@ -48,7 +48,7 @@ _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 def http(host, port, path, token=None, body=None, timeout=3.0, raw=False):
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["X-Phoque Al-Token"] = token
+        headers["X-PhoqueAl-Token"] = token
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request("http://%s:%d%s" % (host, port, path), data=data, headers=headers)
     with _OPENER.open(req, timeout=timeout) as r:

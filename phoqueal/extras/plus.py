@@ -11,17 +11,29 @@ def open_menu(main, btn):
 
 
 def fill_menu(main, m):
-    from . import gamepad, moments, scenes, stats, transitions, visualdupes
-    m.addAction("Statistiques…").triggered.connect(lambda: safe(lambda: stats.StatsDialog(main).exec()))
-    m.addAction("Mes moments favoris…").triggered.connect(lambda: safe(lambda: moments.MomentsDialog(main).exec()))
-    m.addAction("Doublons visuels…").triggered.connect(lambda: safe(lambda: visualdupes.VisualDupesDialog(main).exec()))
+    from . import gamepad, transitions
+    library_items(main, m)
     m.addSeparator()
     transitions.menu(main, m)
+    scenes_menu(main, m)
+    gamepad.menu(main, m)
+
+
+def library_items(main, m, stats_too=True):
+    from . import moments, stats, visualdupes
+    if stats_too:
+        m.addAction("Statistiques…").triggered.connect(lambda: safe(lambda: stats.StatsDialog(main).exec()))
+    m.addAction("Mes moments favoris…").triggered.connect(lambda: safe(lambda: moments.MomentsDialog(main).exec()))
+    m.addAction("Doublons visuels…").triggered.connect(lambda: safe(lambda: visualdupes.VisualDupesDialog(main).exec()))
+
+
+def scenes_menu(main, m):
+    from . import scenes
+    from .. import db
     s = m.addMenu("Changements de scène")
     done, total = scenes.progress(main.conn)
     info = s.addAction("Analysées : %d / %d vidéos (PgUp / PgDn dans le lecteur)" % (done, total))
     info.setEnabled(False)
-    from .. import db
     bg = s.addAction("Analyser toute la bibliothèque en tâche de fond")
     bg.setCheckable(True)
     bg.setChecked(db.get_setting(main.conn, "scenes_background", "0") == "1")
@@ -30,7 +42,6 @@ def fill_menu(main, m):
     ms.setCheckable(True)
     ms.setChecked(db.get_setting(main.conn, "montage_scenes", "1") == "1")
     ms.triggered.connect(lambda on: db.set_setting(main.conn, "montage_scenes", "1" if on else "0"))
-    gamepad.menu(main, m)
 
 
 def toolbar_buttons(main):

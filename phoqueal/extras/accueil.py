@@ -105,47 +105,81 @@ def apply_toolbar(main):
 
 
 def open_menu(main, btn):
-    from . import ecrans, mur, plus
+    """Menu « ⋯ » rangé par thèmes : les actions courantes en haut, le reste dans des sous-menus."""
+    from . import (ameliorer, apercu, autotags, pop, definition, demarrage, ecrans, forts, gamepad, i18n, mur, plus, pmvgen, rythme, seance, taches,
+                   separation, sourdine, transitions, tri)
     m = QMenu(main)
+    moved = {}
     for b in getattr(main, "_moved", []):
-        if text(b).startswith("Plus"):
-            continue
+        for key in MOVED:
+            if text(b).startswith(key):
+                moved[key] = b
+                break
+
+    def add_moved(menu, key, title=None):
+        b = moved.get(key)
+        if b is None:
+            return
         if b.menu() is not None:
-            sub = m.addMenu(label(b))
-            for a in b.menu().actions():
-                sub.addAction(a)
-            continue
-        a = m.addAction(label(b))
-        a.setEnabled(b.isEnabled())
+            sub = menu.addMenu(title or label(b))
+            for act in b.menu().actions():
+                sub.addAction(act)
+            return
+        act = menu.addAction(title or label(b))
+        act.setEnabled(b.isEnabled())
         if b.isCheckable():
-            a.setCheckable(True)
-            a.setChecked(b.isChecked())
-        a.triggered.connect(lambda _=False, x=b: x.click())
+            act.setCheckable(True)
+            act.setChecked(b.isChecked())
+        act.triggered.connect(lambda _=False, x=b: x.click())
+
+    # --- le plus utilisé ---
+    add_moved(m, "Paramètres")
+    add_moved(m, "Actualiser")
+    tri.menu(main, m)
+    add_moved(m, "Téléphone")
     m.addSeparator()
-    m.addAction("Mes écrans (numéros)…").triggered.connect(lambda: ecrans.open_dialog(main))
-    m.addAction("Mur d'écrans…").triggered.connect(lambda: mur.open_setup(main))
-    from . import autotags, forts, pmvgen, rythme, seance
-    seance.menu(main, m)
-    m.addAction("Compilation de mes moments favoris (PMV)…").triggered.connect(
-        lambda: pmvgen.open_dialog(main, None, "moments"))
-    forts.menu(main, m)
-    from . import separation, sourdine
-    sourdine.menu(main, m)
-    separation.menu(main, m)
-    from . import ameliorer
-    ameliorer.menu(main, m)
-    autotags.menu(main, m)
-    rythme.menu(main, m)
-    m.addAction("Créer un PMV…").triggered.connect(lambda: pmvgen.open_dialog(main))
-    a = m.addAction("Choisir l'écran sur une mini-carte (4 écrans et plus)")
+
+    lib = m.addMenu("Bibliothèque")
+    add_moved(lib, "Personnes tags")
+    plus.library_items(main, lib)
+    definition.menu(main, lib)
+    add_moved(lib, "Aperçus")
+
+    scr = m.addMenu("Écrans et lecture")
+    scr.addAction("Mes écrans (numéros)…").triggered.connect(lambda: ecrans.open_dialog(main))
+    add_moved(scr, "Identifier")
+    scr.addAction("Mur d'écrans…").triggered.connect(lambda: mur.open_setup(main))
+    a = scr.addAction("Choisir l'écran sur une mini-carte (4 écrans et plus)")
     a.setCheckable(True); a.setChecked(db.get_setting(main.conn, "picker_map", "1") == "1")
     a.triggered.connect(lambda on: db.set_setting(main.conn, "picker_map", "1" if on else "0"))
+    scr.addSeparator()
+    transitions.menu(main, scr)
+    plus.scenes_menu(main, scr)
+    forts.menu(main, scr)
+    gamepad.menu(main, scr)
+
+    mus = m.addMenu("Musique et PMV")
+    mus.addAction("Créer un PMV…").triggered.connect(lambda: pmvgen.open_dialog(main))
+    mus.addAction("Compilation de mes moments favoris (PMV)…").triggered.connect(
+        lambda: pmvgen.open_dialog(main, None, "moments"))
+    seance.menu(main, mus)
+    pop.menu(main, mus)
+    mus.addSeparator()
+    rythme.menu(main, mus)
+    sourdine.menu(main, mus)
+
+    ia = m.addMenu("Outils IA")
+    autotags.menu(main, ia)
+    separation.menu(main, ia)
+    ameliorer.menu(main, ia)
+
+    pref = m.addMenu("Préférences")
+    home_menu(main, pref.addMenu("Accueil"))
+    demarrage.menu(main, pref)
+    taches.menu(main, pref)
+    apercu.menu(main, pref)
+    add_moved(pref, "Raccourcis")
     m.addSeparator()
-    plus.fill_menu(main, m)
-    m.addSeparator()
-    home_menu(main, m.addMenu("Accueil"))
-    from . import demarrage, i18n
-    demarrage.menu(main, m)
     i18n.menu(main, m)
     m.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 

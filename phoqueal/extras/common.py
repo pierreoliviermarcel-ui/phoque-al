@@ -59,7 +59,54 @@ def current_time(win):
 # ------------------------------------------------------------------------------------------
 # Demarrer une video a un instant precis
 # ------------------------------------------------------------------------------------------
+def quiet_vlc(main):
+    """VLC sans aperçu ni message à chaque capture d'image.
+
+    Le fond flou (bandes noires comblées) et les transitions prennent une capture toutes les ~1,5 s :
+    VLC affichait alors sur la vidéo la vignette et le nom du fichier capturé, en boucle, dès qu'on
+    passait à un format avec bandes noires (bouton « format » de la télécommande, touche du clavier).
+    Les messages de Phoque Al sur la vidéo passent par le « marquee », non concerné par --no-osd."""
+    ctrl = getattr(main, "ctrl", None)
+    if ctrl is None or getattr(ctrl, "_quiet_vlc", False) or getattr(ctrl, "players", None):
+        return
+    try:
+        import vlc
+        new = vlc.Instance(["--no-video-title-show", "--quiet", "--aout=directsound,any",
+                            "--no-snapshot-preview", "--no-osd"])
+        if new is not None:
+            ctrl._old_instance = ctrl.instance           # gardée : la musique l'utilise déjà
+            ctrl.instance = new
+            ctrl._quiet_vlc = True
+    except Exception as e:
+        log("vlc silencieux : %r" % e)
+
+
+def quiet_blur():
+    """Fond flou : plus de capture tant que la vidéo est en pause (l'image ne change pas)."""
+    try:
+        from ..blurfill import BlurMixin
+    except Exception:
+        return
+    if getattr(BlurMixin, "_extras_quiet", False):
+        return
+    orig = BlurMixin.blur_tick
+
+    def blur_tick(self):
+        try:
+            if getattr(self, "_b_pm", None) is not None and not self.player.is_playing():
+                self.blur_layout()
+                return
+        except Exception:
+            pass
+        return orig(self)
+
+    BlurMixin.blur_tick = blur_tick
+    BlurMixin._extras_quiet = True
+
+
 def install_core(main):
+    quiet_vlc(main)
+    quiet_blur()
     from ..players import Controller
     if getattr(Controller, "_extras_start", False):
         return

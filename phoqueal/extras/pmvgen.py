@@ -6,6 +6,9 @@
   dans les 80 % de fin de la vidéo.
 - Effets calés sur les temps : flash néon, zoom « punch », glitch RGB, secousse, fondu au noir
   sur les passages calmes, look néon (couleurs). Intensité réglable.
+- v2.5 : VHS, contours néon, traînées, boomerang, arrêt sur image, pixels, bandes cinéma, négatif éclair,
+  transitions (balayage, tourbillon, brûlure), mots néon sur les temps forts et titre d'intro, images
+  intenses sur les refrains (passages forts), format vertical, boucle de 30 s, plusieurs versions d'un coup.
 - Le fichier final s'appelle « PMV Phoque Al - … » : la frise néon s'affiche toute seule à la lecture
   (ses temps sont déjà connus, aucune analyse à refaire).
 """
@@ -89,8 +92,41 @@ def build_plan(data, total=None, mode="auto", fx=None, intensity=1.0, rng=None):
                 f.append("shake")
         if fx.get("fade") and calm:
             f.append("fade")
+        f += extra_fx(fx, a, e, t1 - t0, calm, intensity, rng)
         segs.append({"t0": round(t0, 3), "t1": round(t1, 3), "fx": f, "calm": calm, "acc": a, "e": e})
     return segs
+
+
+TIME_FX = ("boom", "freeze")
+TRANS_FX = ("whip", "spin", "burn")
+
+
+def extra_fx(fx, a, e, d, calm, intensity, rng):
+    """Effets ajoutés en v2.5 (chacun activable dans la fenêtre)."""
+    k = max(0.3, min(1.6, intensity))
+    f = []
+    if fx.get("neon") and a and e >= 0.70 and rng.random() < 0.55 * k:
+        f.append("neon")
+    if fx.get("invert") and a and e >= 0.85 and rng.random() < 0.30 * k:
+        f.append("invert")
+    if fx.get("pixel") and e >= 0.60 and not a and rng.random() < 0.22 * k:
+        f.append("pixel")
+    if fx.get("ghost") and 0.30 <= e < 0.75 and d >= 0.8 and rng.random() < 0.35:
+        f.append("ghost")
+    if fx.get("vhs") and e < 0.55 and rng.random() < 0.40:
+        f.append("vhs")
+    if fx.get("bars") and a and e >= 0.50 and rng.random() < 0.30 * k:
+        f.append("bars")
+    # un seul effet « de temps » par extrait
+    if fx.get("boom") and 0.6 <= d <= 2.4 and e >= 0.50 and rng.random() < 0.18 * k:
+        f.append("boom")
+    elif fx.get("freeze") and a and e >= 0.60 and 0.4 <= d <= 1.6 and rng.random() < 0.14 * k:
+        f.append("freeze")
+    # une transition d'entrée au plus
+    tr = [t for t in TRANS_FX if fx.get(t) and (t != "burn" or e < 0.6)]
+    if tr and rng.random() < 0.30 * k:
+        f.append(rng.choice(tr))
+    return f
 
 
 STYLES = [
@@ -151,9 +187,13 @@ def pick_clips(segs, pool, rng=None):
     recent = []
     used = set()
 
-    def one(need):
+    def one(need, e=0.5):
         cands = [c for c in pool if c["dur"] > need + 2 and c["vid"] not in recent] or \
                 [c for c in pool if c["dur"] > need + 1] or pool
+        if e >= 0.72 and rng.random() < 0.7:
+            hot = [c for c in cands if c.get("hot")]
+            if hot:
+                cands = hot                     # refrain : de préférence une vidéo qui a des passages forts
         c = rng.choice(cands)
         lo, hi = max(0.0, c["dur"] * 0.2), max(0.0, c["dur"] - need - 0.5)
         if c.get("fixed") and c.get("starts"):
@@ -165,7 +205,19 @@ def pick_clips(segs, pool, rng=None):
             recent.append(c["vid"])
             del recent[:-max(1, min(6, len(pool) - 1))]
             return c, round(ss, 2)
+        hot = [x for x in c.get("hot", []) if lo <= x <= hi and (c["vid"], round(x, 1)) not in used]
+        if e >= 0.72 and hot and rng.random() < 0.8:
+            # les images les plus intenses sur les moments les plus intenses de la musique
+            ss = rng.choice(hot) + rng.uniform(0, 2.0)
+            ss = max(0.0, min(ss, hi))
+            used.add((c["vid"], round(ss, 1)))
+            recent.append(c["vid"])
+            del recent[:-max(1, min(6, len(pool) - 1))]
+            return c, round(ss, 2)
         good = [x for x in c.get("starts", []) if lo <= x <= hi and (c["vid"], round(x, 1)) not in used]
+        if e < 0.40 and c.get("hot"):
+            calm = [x for x in good if all(abs(x - h) > 15 for h in c["hot"])]
+            good = calm or good                 # couplets calmes : on évite les passages forts
         ss = rng.choice(good) if good and rng.random() < 0.7 else (rng.uniform(lo, hi) if hi > lo else 0.0)
         used.add((c["vid"], round(ss, 1)))
         recent.append(c["vid"])
@@ -180,11 +232,12 @@ def pick_clips(segs, pool, rng=None):
                 s["srcs"] = prev["srcs"]
             continue
         need = (s["t1"] - s["t0"]) * s.get("speed", 1.0) + 0.5
-        c, ss = one(need)
+        e = s.get("e", 0.5)
+        c, ss = one(need, e)
         s["src"], s["ss"], s["vid"] = c["path"], ss, c["vid"]
         n = NEED.get(s.get("style"), 1)
         if n > 1:
-            s["srcs"] = [(c["path"], ss)] + [(lambda r: (r[0]["path"], r[1]))(one(need)) for _ in range(n - 1)]
+            s["srcs"] = [(c["path"], ss)] + [(lambda r: (r[0]["path"], r[1]))(one(need, e)) for _ in range(n - 1)]
         prev = s
     return segs
 
@@ -211,6 +264,43 @@ def style_chain(seg, W, H, fps, intensity):
     return []
 
 
+def time_chain(seg, W, H, fps):
+    """Boomerang (aller-retour) ou arrêt sur image avec zoom : change le déroulé de l'extrait."""
+    f = seg.get("fx", [])
+    d = max(0.1, seg["t1"] - seg["t0"])
+    if "boom" in f:
+        return ["trim=duration=%.3f,setpts=PTS-STARTPTS,split[ba][bb];[bb]reverse[br];[ba][br]concat=n=2:v=1:a=0" % (d / 2 + 0.05)]
+    if "freeze" in f:
+        n = max(2, int(round(d * fps)) + 2)
+        return ["trim=end_frame=1,loop=loop=%d:size=1:start=0,setpts=N/%d/TB" % (n, fps),
+                "zoompan=z='1+0.18*on/%d':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=%dx%d:fps=%d" % (n, W, H, fps)]
+    return []
+
+
+def font_path():
+    for p in ("C:/Windows/Fonts/impact.ttf", "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/segoeuib.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def text_chain(seg, W, H):
+    """Texte néon : fichiers relatifs au dossier de travail (aucun « : » à échapper dans les chemins)."""
+    out = []
+    if seg.get("titlefile"):
+        out.append("drawtext=fontfile=font.ttf:textfile=%s:expansion=none:fontsize=%d:fontcolor=white:borderw=%d:"
+                   "bordercolor=0x22F3FF:x=(w-text_w)/2:y=(h-text_h)/2:alpha='min(1,t/0.4)':enable='lt(t,%.2f)'"
+                   % (seg["titlefile"], max(24, min(W, H) // 9), max(2, min(W, H) // 180), min(2.8, seg["t1"] - seg["t0"])))
+    if seg.get("wordfile"):
+        out.append("drawtext=fontfile=font.ttf:textfile=%s:expansion=none:fontsize=%d:fontcolor=white:borderw=%d:"
+                   "bordercolor=0xFF2BD6:x=(w-text_w)/2:y=(h-text_h)/2:"
+                   "alpha='if(lt(t,0.04),t/0.04,max(0,1-(t-0.30)/0.15))':enable='lt(t,0.45)'"
+                   % (seg["wordfile"], max(24, min(min(W, H) // 6, int(W * 1.5 / max(4, len(seg.get("word") or "xxxx"))))),
+                      max(3, min(W, H) // 120)))
+    return out
+
+
 def post_chain(seg, W, H, fps, look, intensity, effects=True):
     out = []
     if look:
@@ -234,6 +324,32 @@ def post_chain(seg, W, H, fps, look, intensity, effects=True):
             out.append("fade=t=in:st=0:d=%.2f:color=%s" % (0.12 + 0.08 * k, NEON if seg.get("acc") else CYANX))
         if "fade" in f:
             out.append("fade=t=in:st=0:d=0.35")
+        if "vhs" in f:
+            out.append("chromashift=cbh=%d:crh=-%d,noise=alls=%d:allf=t,eq=saturation=1.2:contrast=1.06,"
+                       "gblur=sigma=0.6,drawgrid=w=iw:h=4:t=1:c=black@0.30" % (3 + int(3 * k), 3 + int(3 * k), int(14 * k) + 4))
+        if "ghost" in f:
+            out.append("tmix=frames=4:weights='1 0.7 0.45 0.25'")
+        if "neon" in f:
+            out.append("format=gbrp,split[na][nb];[nb]edgedetect=low=0.04:high=0.12:mode=wires,"
+                       "colorchannelmixer=rr=1:rg=0:rb=0:gr=0.17:gg=0:gb=0:br=0.84:bg=0:bb=0,gblur=sigma=1.5,"
+                       "lutrgb=r='min(255,val*3)':g='min(255,val*3)':b='min(255,val*3)'[ne];"
+                       "[na][ne]blend=all_mode=screen:enable='lt(t,%.2f)',format=yuv420p" % (0.25 + 0.15 * k))
+        if "pixel" in f:
+            out.append("split[pa][pb];[pb]scale=%d:%d:flags=neighbor,scale=%d:%d:flags=neighbor[pp];"
+                       "[pa][pp]overlay=enable='lt(t,%.2f)'" % (max(8, W // 28), max(6, H // 28), W, H, 0.12 + 0.08 * k))
+        if "invert" in f:
+            out.append("negate=enable='lt(t,0.07)'")
+        if "bars" in f:
+            hb = int(H * 0.10 * k)
+            out.append("drawbox=x=0:y=0:w=iw:h=%d:color=black:t=fill:enable='lt(t,0.22)',"
+                       "drawbox=x=0:y=ih-%d:w=iw:h=%d:color=black:t=fill:enable='lt(t,0.22)'" % (hb, hb, hb))
+        if "whip" in f:
+            out.append("gblur=sigma=%d:sigmaV=0.01:enable='lt(t,0.10)'" % int(30 * k + 10))
+        if "spin" in f:
+            out.append("rotate=a='%.3f*exp(-t*14)':fillcolor=black" % (0.35 * k))
+        if "burn" in f:
+            out.append("fade=t=in:st=0:d=0.28:color=0xFF6A00")
+        out += text_chain(seg, W, H)
     out.append("tpad=stop_mode=clone:stop_duration=3")
     return out
 
@@ -243,6 +359,7 @@ def vf_chain(seg, W, H, fps, look, intensity, effects=True):
     st = seg.get("style") if effects else None
     s2 = dict(seg, style=st) if effects else dict(seg, style=None)
     parts = base_chain(W, H, fps, seg.get("speed", 1.0)) + (style_chain(s2, W, H, fps, intensity) if effects else []) \
+        + (time_chain(s2, W, H, fps) if effects and st not in ("pulse",) else []) \
         + post_chain(s2, W, H, fps, look, intensity, effects)
     return ",".join(parts)
 
@@ -252,19 +369,39 @@ def seg_args(seg, W, H, fps, look, intensity, effects=True):
     n = NEED.get(seg.get("style"), 1)
     srcs = seg.get("srcs") or []
     if effects and n > 1 and len(srcs) >= n:
-        tw, th = (W // 2, H) if n == 2 else (W // 2, H // 2)
+        vert = H > W
+        tw, th = ((W, H // 2) if vert else (W // 2, H)) if n == 2 else (W // 2, H // 2)
         args, g = [], []
         for i, (path, ss) in enumerate(srcs[:n]):
             args += ["-ss", "%.2f" % ss, "-i", path]
             g.append("[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,fps=%d[v%d]"
                      % (i, tw, th, tw, th, fps, i))
         if n == 2:
-            g.append("[v0][v1]hstack=inputs=2[s]")
+            g.append("[v0][v1]%s=inputs=2[s]" % ("vstack" if vert else "hstack"))
         else:
             g.append("[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0[s]")
         g.append("[s]" + ",".join(post_chain(seg, W, H, fps, look, intensity, True)) + "[out]")
         return args + ["-filter_complex", ";".join(g), "-map", "[out]"]
     return ["-ss", "%.2f" % seg["ss"], "-i", seg["src"], "-vf", vf_chain(seg, W, H, fps, look, intensity, effects)]
+
+
+def add_words(segs, words, title=None, intensity=1.0, rng=None):
+    """Mots qui claquent sur les temps forts (en alternance), titre sur le premier extrait."""
+    rng = rng or random.Random()
+    words = [w.strip() for w in words if w and w.strip()]
+    if title and segs:
+        segs[0]["title"] = title.strip()[:60]
+    if not words:
+        return segs
+    k, last = 0, -9
+    for i, s in enumerate(segs):
+        if s.get("title") or s.get("rep"):
+            continue
+        if s.get("acc") and s.get("e", 0) >= 0.55 and i - last >= 2 and rng.random() < 0.45 * max(0.5, intensity):
+            s["word"] = words[k % len(words)][:30]
+            k += 1
+            last = i
+    return segs
 
 
 # ----------------------------------------------------------------------------------------
@@ -310,10 +447,12 @@ class Render:
 
     def _ff(self, args, timeout=300):
         r = subprocess.run([self.ffmpeg, "-hide_banner", "-loglevel", "error", "-y"] + args,
-                           capture_output=True, text=True, errors="replace", timeout=timeout, creationflags=_FLAGS)
+                           capture_output=True, text=True, errors="replace", timeout=timeout, creationflags=_FLAGS,
+                           cwd=getattr(self, "cwd", None))
         return r.returncode == 0, r.stderr[-400:]
 
-    def _run(self):
+    def plan(self):
+        """Analyse la musique et prépare la liste des extraits (sans rien rendre)."""
         o = self.o
         conn = self.conn_factory() if self.conn_factory else None
         data = B.get(conn, self.ffmpeg, self.music) if conn is not None else B.analyse(self.ffmpeg, self.music)
@@ -326,13 +465,54 @@ class Render:
         period = float(sorted(b - a for a, b in zip(bt, bt[1:]))[len(bt) // 2]) if len(bt) > 2 else 0.5
         segs = apply_style(segs, o.get("style", "classique"), period, rng)
         segs = pick_clips(segs, self.pool, rng)
+        add_words(segs, o.get("words") or [], o.get("title"), o.get("intensity", 1.0), rng)
+        self.data, self.segs, self.rng = data, segs, rng
+        return segs
+
+    def reroll(self, i):
+        """Autre extrait pour le segment i (et ses répétitions de stutter)."""
+        s = self.segs[i]
+        others = [c for c in self.pool if c["vid"] != s.get("vid")] or self.pool
+        tmp = [dict(s, rep=False)]
+        pick_clips(tmp, others, self.rng)
+        for j in range(i, len(self.segs)):
+            if j > i and not self.segs[j].get("rep"):
+                break
+            for k in ("src", "ss", "vid", "srcs"):
+                if k in tmp[0]:
+                    self.segs[j][k] = tmp[0][k]
+
+    def drop_video(self, vid):
+        """Retire une vidéo de ce PMV : tous ses extraits sont remplacés."""
+        self.pool = [c for c in self.pool if c["vid"] != vid] or self.pool
+        for i, s in enumerate(self.segs):
+            if s.get("vid") == vid and not s.get("rep"):
+                self.reroll(i)
+
+    def _run(self):
+        o = self.o
+        conn = self.conn_factory() if self.conn_factory else None
+        if getattr(self, "segs", None) is None:
+            self.plan()
+        data, segs, rng = self.data, self.segs, self.rng
         dur = segs[-1]["t1"]
         W, H = o.get("size", (1920, 1080))
         fps = o.get("fps", 30)
         tmp = tempfile.mkdtemp(prefix=".focal_pmv_", dir=os.path.dirname(self.out) or None)
         self.total = len(segs) + 1
         self.step = "Montage des extraits…"
+        self.cwd = tmp
         try:
+            fp = font_path()
+            if fp and any(sg.get("word") or sg.get("title") for sg in segs):
+                shutil.copyfile(fp, os.path.join(tmp, "font.ttf"))
+                for i, sg in enumerate(segs):
+                    for key in ("word", "title"):
+                        if sg.get(key):
+                            name = "%s%04d.txt" % (key[0], i)
+                            with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
+                                fh.write(sg[key])
+                            sg[key + "file"] = name
             files = [None] * len(segs)
             auds = [None] * len(segs)
 
@@ -388,8 +568,17 @@ class Render:
                 g = ("[1:a]atrim=0:%.3f,afade=t=out:st=%.2f:d=2,asplit=2[m1][m2];"
                      "[2:a]dynaudnorm=f=150:g=15,atrim=0:%.3f,afade=t=out:st=%.2f:d=2,asplit=2[c1][c2];"
                      "[m1][c1]amix=inputs=2:weights='1 0.6':normalize=0:duration=first[mix]" % (dur, fade, dur, fade))
+                extra_in = []
+                if o.get("sfx"):
+                    try:
+                        sp = os.path.join(tmp, "sfx.wav")
+                        write_wav(sp, sfx_track(segs, dur))
+                        extra_in = ["-i", sp]
+                        g = g.replace("[mix]", "[mx0]") + ";[3:a]atrim=0:%.3f[sx];[mx0][sx]amix=inputs=2:weights='1 0.5':normalize=0:duration=first[mix]" % dur
+                    except Exception as e:
+                        log("pmv bruitages : %r" % e)
                 ok, err = self._ff(["-f", "concat", "-safe", "0", "-i", lst, "-i", self.music,
-                                    "-f", "concat", "-safe", "0", "-i", alst, "-filter_complex", g,
+                                    "-f", "concat", "-safe", "0", "-i", alst] + extra_in + ["-filter_complex", g,
                                     "-map", "0:v", "-map", "[mix]", "-map", "[m2]", "-map", "[c2]",
                                     "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                                     "-metadata:s:a:0", "title=Musique et sons des vidéos", "-metadata:s:a:0", "handler_name=Musique et sons des vidéos",
@@ -420,6 +609,206 @@ class Render:
             self.result = {"path": self.out, "segments": len(segs), "dur": dur, "bpm": data["bpm"]}
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+def sfx_track(segs, dur, sr=48000, level=0.6):
+    """Bruitages synthétisés calés sur le montage : « whoosh » avant les transitions,
+    impact sourd sur les temps les plus forts, montée (riser) avant les gros refrains. -> tableau (n, 2)."""
+    import numpy as np
+    n = int(dur * sr) + sr
+    out = np.zeros(n, np.float32)
+    rng = np.random.default_rng(1234)
+
+    def put(sig, t):
+        i = int(t * sr)
+        if i < 0:
+            sig, i = sig[-i:], 0
+        j = min(n, i + len(sig))
+        if j > i:
+            out[i:j] += sig[:j - i]
+
+    def whoosh(d=0.35):
+        m = int(d * sr)
+        x = rng.standard_normal(m).astype(np.float32)
+        # bruit filtré qui monte puis s'éteint (passe-bas glissant)
+        env = np.sin(np.linspace(0, np.pi, m)) ** 2
+        y = np.zeros(m, np.float32)
+        a = np.linspace(0.02, 0.35, m)
+        acc = 0.0
+        for k in range(m):
+            acc += a[k] * (x[k] - acc)
+            y[k] = acc
+        return (y * env * 1.8).astype(np.float32)
+
+    def impact(d=0.5):
+        m = int(d * sr)
+        t = np.arange(m) / sr
+        f = 48 + 90 * np.exp(-t * 18)
+        y = np.sin(2 * np.pi * np.cumsum(f) / sr) * np.exp(-t * 7)
+        y += 0.25 * rng.standard_normal(m) * np.exp(-t * 40)
+        return (y * 0.9).astype(np.float32)
+
+    def riser(d=1.8):
+        m = int(d * sr)
+        t = np.arange(m) / sr
+        f = 300 + 1500 * (t / d) ** 2
+        y = 0.25 * np.sin(2 * np.pi * np.cumsum(f) / sr) + 0.35 * rng.standard_normal(m) * (t / d)
+        return (y * (t / d) ** 1.5 * 0.6).astype(np.float32)
+
+    W, I, R = whoosh(), impact(), riser()
+    prev_e = 0.0
+    for sg in segs:
+        f = sg.get("fx", [])
+        t0, e = sg["t0"], sg.get("e", 0.5)
+        if any(x in f for x in ("whip", "spin", "burn")):
+            put(W, t0 - 0.28)
+        if sg.get("acc") and e >= 0.85 and any(x in f for x in ("neon", "invert", "freeze", "zoom")):
+            put(I, t0)
+        if prev_e < 0.55 and e >= 0.80 and t0 > 3:
+            put(R, t0 - len(R) / sr)
+        prev_e = e
+    out = np.tanh(out * level)
+    return np.stack([out, out], axis=1)
+
+
+def write_wav(path, data, sr=48000):
+    import wave
+    import numpy as np
+    pcm = (np.clip(data, -1, 1) * 32767).astype("<i2")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+
+
+def review_dialog(parent, main, job):
+    """Liste des extraits prévus : changer un extrait, retirer une vidéo, puis lancer le rendu."""
+    from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
+                                   QVBoxLayout, QAbstractItemView)
+    d = QDialog(parent)
+    d.setWindowTitle("Extraits du PMV")
+    d.resize(860, 560)
+    lay = QVBoxLayout(d)
+    lay.addWidget(QLabel("Double-clic sur une ligne : voir l'extrait. Les effets et les coupes restent calés sur la musique."))
+    tab = QTableWidget(0, 6)
+    tab.setHorizontalHeaderLabels(["Temps", "Durée", "Vidéo", "Départ", "Style", "Effets"])
+    tab.setSelectionBehavior(QAbstractItemView.SelectRows)
+    tab.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    tab.horizontalHeader().setStretchLastSection(True)
+    lay.addWidget(tab, 1)
+    names = {}
+
+    def title_of(vid):
+        if vid not in names:
+            try:
+                r = main.conn.execute("SELECT title FROM videos WHERE id=?", (vid,)).fetchone()
+                names[vid] = ("Vidéo %d" % vid) if main.discreet else (r[0] if r else str(vid))
+            except Exception:
+                names[vid] = str(vid)
+        return names[vid]
+
+    def fill():
+        tab.setRowCount(len(job.segs))
+        for i, s in enumerate(job.segs):
+            m, sec = divmod(s["t0"], 60)
+            fx = list(s.get("fx", [])) + (["« %s »" % s["word"]] if s.get("word") else [])
+            vals = ["%d:%05.2f" % (m, sec), "%.2f s" % (s["t1"] - s["t0"]),
+                    ("↻ " if s.get("rep") else "") + title_of(s.get("vid")), "%.1f s" % s.get("ss", 0),
+                    s.get("style") or "", ", ".join(fx)]
+            for c, v in enumerate(vals):
+                tab.setItem(i, c, QTableWidgetItem(v))
+        tab.resizeColumnsToContents()
+
+    def sel():
+        r = tab.currentRow()
+        return r if 0 <= r < len(job.segs) else None
+
+    def reroll():
+        r = sel()
+        if r is not None:
+            while r > 0 and job.segs[r].get("rep"):
+                r -= 1
+            job.reroll(r)
+            fill()
+            tab.selectRow(r)
+
+    def drop():
+        r = sel()
+        if r is not None:
+            job.drop_video(job.segs[r].get("vid"))
+            fill()
+
+    def watch(row, _col=None):
+        s = job.segs[row]
+        try:
+            main.ctrl.play(s.get("vid"))
+            QTimerSingle = __import__("PySide6.QtCore", fromlist=["QTimer"]).QTimer
+            QTimerSingle.singleShot(900, lambda: [w.player.set_time(int(s.get("ss", 0) * 1000))
+                                                  for w in list(main.ctrl.players.values())
+                                                  if getattr(w, "video_id", None) == s.get("vid") and hasattr(w, "player")])
+        except Exception as e:
+            log("pmv aperçu : %r" % e)
+    tab.cellDoubleClicked.connect(watch)
+    row = QHBoxLayout()
+    b1 = QPushButton("Changer cet extrait"); b1.clicked.connect(reroll)
+    b2 = QPushButton("Retirer cette vidéo du PMV"); b2.clicked.connect(drop)
+    row.addWidget(b1); row.addWidget(b2); row.addStretch(1)
+    cancel = QPushButton("Annuler"); ok = QPushButton("Lancer le rendu"); ok.setDefault(True)
+    cancel.clicked.connect(d.reject); ok.clicked.connect(d.accept)
+    row.addWidget(cancel); row.addWidget(ok)
+    lay.addLayout(row)
+    fill()
+    return d.exec() == QDialog.Accepted
+
+
+RUNNING = []          # rendus en cours (panneau « traitements en cours »)
+
+
+class Batch:
+    """Plusieurs versions à la suite (même interface que Render pour la fenêtre)."""
+    def __init__(self, jobs):
+        self.jobs = jobs
+        self.cur = 0
+        self.finished = False
+        self.error = None
+        self.result = None
+        self._cancel = False
+
+    @property
+    def total(self):
+        return sum(j.total for j in self.jobs)
+
+    @property
+    def done(self):
+        return sum(j.done for j in self.jobs)
+
+    @property
+    def step(self):
+        j = self.jobs[min(self.cur, len(self.jobs) - 1)]
+        return j.step + ("  (version %d/%d)" % (self.cur + 1, len(self.jobs)) if len(self.jobs) > 1 else "")
+
+    @property
+    def cancel(self):
+        return self._cancel
+
+    @cancel.setter
+    def cancel(self, v):
+        self._cancel = v
+        for j in self.jobs:
+            j.cancel = v
+
+    def run(self):
+        for i, j in enumerate(self.jobs):
+            self.cur = i
+            if self._cancel:
+                break
+            j.run()
+            if j.error:
+                self.error = j.error
+                break
+            self.result = self.result or j.result
+        self.finished = True
 
 
 # ----------------------------------------------------------------------------------------
@@ -453,7 +842,11 @@ def build_pool(main, vids, limit=400):
         d = (row["duration"] if row is not None and "duration" in row.keys() else 0) or 0
         if d < 6:
             continue
-        pool.append({"vid": vid, "path": path, "dur": float(d), "starts": starts_for(conn, vid)})
+        try:
+            hot = [r[0] for r in conn.execute("SELECT t0 FROM hot WHERE video_id=? ORDER BY score DESC LIMIT 8", (vid,))]
+        except Exception:
+            hot = []
+        pool.append({"vid": vid, "path": path, "dur": float(d), "starts": starts_for(conn, vid), "hot": hot})
     return pool
 
 
@@ -516,6 +909,171 @@ def music_files(main):
 # ----------------------------------------------------------------------------------------
 # Fenêtre « Créer un PMV »
 # ----------------------------------------------------------------------------------------
+def pick_videos(main, parent, preselected=None):
+    """Fenêtre de choix manuel : recherche, filtre, vignettes à cocher. -> liste d'ids (ordre des clics) ou None."""
+    from PySide6.QtCore import QSize, Qt, QTimer
+    from PySide6.QtGui import QIcon, QPixmap
+    from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                                   QListWidgetItem, QPushButton, QVBoxLayout)
+    conn = main.conn
+    discreet = bool(main.discreet)
+    chosen = list(dict.fromkeys(preselected or []))
+    d = QDialog(parent)
+    d.setWindowTitle("Choisir les vidéos du PMV")
+    d.resize(980, 680)
+    lay = QVBoxLayout(d)
+    top = QHBoxLayout()
+    q = QLineEdit()
+    q.setPlaceholderText("Rechercher : titre, thème, personne…")
+    q.setClearButtonEnabled(True)
+    flt = QComboBox()
+    flt.addItem("Toute la bibliothèque", ("all", None))
+    flt.addItem("Coups de cœur", ("likes", None))
+    flt.addItem("Les mieux notées (4-5 étoiles)", ("stars", None))
+    try:
+        for p in db.list_playlists(conn):
+            flt.addItem("Playlist : %s" % ("Playlist %d" % p["id"] if discreet else p["name"]), ("playlist", p["id"]))
+    except Exception:
+        pass
+    try:
+        for i, t in enumerate(db.categories(conn), 1):
+            flt.addItem("Thème : %s" % ("Collection %d" % i if discreet else t["category"]), ("theme", t["category"]))
+    except Exception:
+        pass
+    only = QCheckBox("Seulement la sélection")
+    top.addWidget(q, 2); top.addWidget(flt, 1); top.addWidget(only)
+    lay.addLayout(top)
+    lst = QListWidget()
+    lst.setViewMode(QListWidget.IconMode)
+    lst.setIconSize(QSize(176, 99))
+    lst.setGridSize(QSize(196, 150))
+    lst.setResizeMode(QListWidget.Adjust)
+    lst.setMovement(QListWidget.Static)
+    lst.setWordWrap(True)
+    lst.setUniformItemSizes(True)
+    lay.addWidget(lst, 1)
+    bottom = QHBoxLayout()
+    count = QLabel()
+    clear = QPushButton("Tout décocher")
+    allb = QPushButton("Tout cocher (liste affichée)")
+    cancel = QPushButton("Annuler")
+    ok = QPushButton("Valider")
+    ok.setDefault(True)
+    bottom.addWidget(count, 1); bottom.addWidget(allb); bottom.addWidget(clear); bottom.addWidget(cancel); bottom.addWidget(ok)
+    lay.addLayout(bottom)
+    blank = QPixmap(176, 99)
+    blank.fill(Qt.black)
+    state = {"rows": [], "next": 0, "filling": False}
+    loader = QTimer(d)
+
+    def upd_count():
+        count.setText("%d vidéo(s) choisie(s)" % len(chosen))
+        ok.setEnabled(len(chosen) > 0)
+
+    def rows_for():
+        text = q.text().strip()
+        kind, ident = flt.currentData()
+        if only.isChecked():
+            ids = list(chosen)
+        elif kind == "all" and not text:
+            ids = None
+        else:
+            ids = source_ids(main, kind, ident) if kind != "all" else None
+        if text:
+            found = db.search(conn, text, 2000)
+            if ids is not None:
+                keep = set(ids)
+                found = [r for r in found if r["id"] in keep]
+            return [r for r in found if r["kind"] == "video"][:1500]
+        if ids is None:
+            return conn.execute("SELECT * FROM videos WHERE missing=0 AND kind='video' "
+                                "ORDER BY added_at DESC LIMIT 1500").fetchall()
+        out = []
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            out += conn.execute("SELECT * FROM videos WHERE missing=0 AND kind='video' AND id IN (%s)"
+                                % ",".join("?" * len(part)), part).fetchall()
+        order = {v: k for k, v in enumerate(ids)}
+        out.sort(key=lambda r: order.get(r["id"], 0))
+        return out[:1500]
+
+    def fill():
+        loader.stop()
+        state["filling"] = True
+        lst.clear()
+        try:
+            state["rows"] = rows_for()
+        except Exception as e:
+            log("pmv choix : %r" % e)
+            state["rows"] = []
+        state["next"] = 0
+        sel = set(chosen)
+        for n, r in enumerate(state["rows"], 1):
+            it = QListWidgetItem(QIcon(blank), ("Vidéo %d" % n) if discreet else (r["title"] or ""))
+            it.setData(Qt.UserRole, r["id"])
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if r["id"] in sel else Qt.Unchecked)
+            if not discreet:
+                it.setToolTip(r["title"] or "")
+            lst.addItem(it)
+        state["filling"] = False
+        if not discreet:
+            loader.start(0)
+        upd_count()
+
+    def load_some():
+        rows = state["rows"]
+        k = state["next"]
+        for i in range(k, min(k + 24, len(rows))):
+            t = rows[i]["thumb"]
+            if t and os.path.isfile(t):
+                pm = QPixmap(t)
+                if not pm.isNull():
+                    lst.item(i).setIcon(QIcon(pm.scaled(176, 99, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)))
+        state["next"] = k + 24
+        if state["next"] >= len(rows):
+            loader.stop()
+    loader.timeout.connect(load_some)
+
+    def changed(it):
+        if state["filling"]:
+            return
+        vid = it.data(Qt.UserRole)
+        if it.checkState() == Qt.Checked:
+            if vid not in chosen:
+                chosen.append(vid)
+        elif vid in chosen:
+            chosen.remove(vid)
+        upd_count()
+    lst.itemChanged.connect(changed)
+    lst.itemDoubleClicked.connect(lambda it: it.setCheckState(Qt.Unchecked if it.checkState() == Qt.Checked else Qt.Checked))
+
+    def set_all(on):
+        for i in range(lst.count()):
+            lst.item(i).setCheckState(Qt.Checked if on else Qt.Unchecked)
+        if not on:
+            chosen.clear()
+            upd_count()
+    clear.clicked.connect(lambda: set_all(False))
+    allb.clicked.connect(lambda: set_all(True))
+    deb = QTimer(d)
+    deb.setSingleShot(True)
+    deb.setInterval(300)
+    deb.timeout.connect(fill)
+    q.textChanged.connect(lambda _t: deb.start())
+    flt.currentIndexChanged.connect(lambda _i: fill())
+    only.toggled.connect(lambda _b: fill())
+    cancel.clicked.connect(d.reject)
+    ok.clicked.connect(d.accept)
+    if chosen:
+        only.setChecked(True)
+    else:
+        fill()
+    if d.exec() != QDialog.Accepted:
+        return None
+    return list(chosen)
+
+
 def open_dialog(main, vids=None, source=None):
     safe(lambda: PmvDialog(main, vids, source).exec())
 
@@ -559,7 +1117,34 @@ def PmvDialog(main, vids=None, source=None):
             if src.itemData(i)[0] == source:
                 src.setCurrentIndex(i)
                 break
-    f.addRow("Vidéos", src)
+    choose = QPushButton("Choisir les vidéos…")
+    choose.setToolTip("Coche toi-même les vidéos du PMV (recherche, thème, coups de cœur…)")
+
+    def choose_videos():
+        cur = src.currentData()
+        pre = list(cur[1]) if cur and cur[0] == "ids" else []
+        picked = pick_videos(main, d, pre)
+        if picked is None:
+            return
+        for i in range(src.count()):
+            if src.itemData(i)[0] == "ids":
+                src.removeItem(i)
+                break
+        if picked:
+            src.insertItem(0, "Vidéos choisies (%d)" % len(picked), ("ids", picked))
+            src.setCurrentIndex(0)
+    choose.clicked.connect(choose_videos)
+    srow = QHBoxLayout()
+    srow.addWidget(src, 1)
+    srow.addWidget(choose)
+    f.addRow("Vidéos", srow)
+    from . import definition
+    defin = QComboBox()
+    for k, lab, _ok in definition.FILTERS:
+        defin.addItem(lab, k)
+    defin.setCurrentIndex(max(0, defin.findData(db.get_setting(main.conn, "pmv_def", "all"))))
+    defin.setToolTip("Mélanger HD et basse définition donne des coupes inégales : garde une seule qualité")
+    f.addRow("Définition", defin)
 
     mrow = QHBoxLayout()
     music = QComboBox()
@@ -587,7 +1172,7 @@ def PmvDialog(main, vids=None, source=None):
     f.addRow("Musique", mrow)
 
     length = QComboBox()
-    for lab, v in (("Morceau entier", 0), ("1 min", 1), ("2 min", 2), ("3 min", 3), ("5 min", 5)):
+    for lab, v in (("Morceau entier", 0), ("30 s (boucle courte)", 0.5), ("1 min", 1), ("2 min", 2), ("3 min", 3), ("5 min", 5)):
         length.addItem(lab, v)
     f.addRow("Durée", length)
     mode = QComboBox()
@@ -609,6 +1194,31 @@ def PmvDialog(main, vids=None, source=None):
         c = QCheckBox(lab); c.setChecked(db.get_setting(main.conn, "pmv_fx_" + k, "1" if on else "0") == "1")
         boxes[k] = c; fxrow.addWidget(c)
     f.addRow("Effets", fxrow)
+    fxrow2 = QHBoxLayout()
+    for k, lab, on in (("vhs", "VHS", True), ("neon", "Contours néon", True), ("ghost", "Traînées", True),
+                       ("boom", "Boomerang", True), ("freeze", "Arrêt sur image", True), ("pixel", "Pixels", True),
+                       ("bars", "Bandes cinéma", True), ("invert", "Négatif éclair", False)):
+        c = QCheckBox(lab); c.setChecked(db.get_setting(main.conn, "pmv_fx_" + k, "1" if on else "0") == "1")
+        boxes[k] = c; fxrow2.addWidget(c)
+    f.addRow("", fxrow2)
+    trrow = QHBoxLayout()
+    for k, lab, on in (("whip", "Balayage", True), ("spin", "Tourbillon", True), ("burn", "Brûlure de pellicule", True)):
+        c = QCheckBox(lab); c.setChecked(db.get_setting(main.conn, "pmv_fx_" + k, "1" if on else "0") == "1")
+        boxes[k] = c; trrow.addWidget(c)
+    trrow.addStretch(1)
+    f.addRow("Transitions", trrow)
+    preview = QCheckBox("Voir et retoucher la liste des extraits avant le rendu")
+    preview.setChecked(db.get_setting(main.conn, "pmv_preview", "0") == "1")
+    sfx = QCheckBox("Bruitages synthétisés (whoosh, impacts, montées) dans la piste « musique et sons »")
+    sfx.setChecked(db.get_setting(main.conn, "pmv_sfx", "0") == "1")
+    f.addRow("", sfx)
+    f.addRow("", preview)
+    words = QLineEdit(db.get_setting(main.conn, "pmv_words", "") or "")
+    words.setPlaceholderText("Mots qui claquent sur les temps forts, séparés par des virgules (vide = aucun)")
+    f.addRow("Mots", words)
+    title = QLineEdit(db.get_setting(main.conn, "pmv_title", "") or "")
+    title.setPlaceholderText("Titre affiché au début (vide = aucun)")
+    f.addRow("Titre", title)
     look = QCheckBox("Couleurs néon (contraste, saturation, teinte magenta / cyan)")
     look.setChecked(db.get_setting(main.conn, "pmv_look", "1") == "1")
     f.addRow("", look)
@@ -618,9 +1228,14 @@ def PmvDialog(main, vids=None, source=None):
     inten.setCurrentIndex(1)
     f.addRow("Intensité", inten)
     qual = QComboBox()
-    for lab, v in (("1080p (conseillé)", (1920, 1080)), ("720p (plus rapide)", (1280, 720)), ("4K (lent)", (3840, 2160))):
+    for lab, v in (("1080p (conseillé)", (1920, 1080)), ("720p (plus rapide)", (1280, 720)), ("4K (lent)", (3840, 2160)),
+                   ("Vertical téléphone 1080×1920", (1080, 1920)), ("Vertical 720×1280 (rapide)", (720, 1280))):
         qual.addItem(lab, v)
     f.addRow("Qualité", qual)
+    versions = QComboBox()
+    for lab, v in (("1 version", 1), ("2 versions différentes", 2), ("3 versions différentes", 3)):
+        versions.addItem(lab, v)
+    f.addRow("Versions", versions)
 
     orow = QHBoxLayout()
     outdir = QLineEdit(db.get_setting(main.conn, "pmv_dir", "") or os.path.expanduser("~/Videos"))
@@ -636,12 +1251,90 @@ def PmvDialog(main, vids=None, source=None):
     rescan.setChecked(True)
     f.addRow("", rescan)
 
+    # préréglages : style, coupes, effets, couleurs, intensité, qualité, mots
+    prow = QHBoxLayout()
+    preset = QComboBox()
+    psave = QPushButton("Enregistrer…")
+    pdel = QPushButton("Supprimer")
+    prow.addWidget(preset, 1); prow.addWidget(psave); prow.addWidget(pdel)
+    f.insertRow(0, "Préréglage", prow)
+
+    def presets():
+        try:
+            v = json.loads(db.get_setting(main.conn, "pmv_presets", "") or "{}")
+            return v if isinstance(v, dict) else {}
+        except Exception:
+            return {}
+
+    def fill_presets(sel=None):
+        preset.blockSignals(True)
+        preset.clear()
+        preset.addItem("(réglages actuels)", None)
+        for k in sorted(presets()):
+            preset.addItem(k, k)
+        if sel:
+            i = preset.findData(sel)
+            preset.setCurrentIndex(max(0, i))
+        preset.blockSignals(False)
+
+    def snapshot():
+        return {"style": style.currentData(), "mode": mode.currentData(), "look": look.isChecked(),
+                "intensity": inten.currentData(), "size": list(qual.currentData()), "sfx": sfx.isChecked(),
+                "words": words.text(), "fx": {k: c.isChecked() for k, c in boxes.items()}}
+
+    def apply_preset(_=None):
+        k = preset.currentData()
+        p = presets().get(k) if k else None
+        if not p:
+            return
+        for combo, key in ((style, "style"), (mode, "mode"), (inten, "intensity")):
+            i = combo.findData(p.get(key))
+            if i >= 0:
+                combo.setCurrentIndex(i)
+        if p.get("size"):
+            i = qual.findData(tuple(p["size"]))
+            if i >= 0:
+                qual.setCurrentIndex(i)
+        look.setChecked(bool(p.get("look", True)))
+        sfx.setChecked(bool(p.get("sfx", False)))
+        words.setText(p.get("words", ""))
+        for kk, c in boxes.items():
+            if kk in p.get("fx", {}):
+                c.setChecked(bool(p["fx"][kk]))
+
+    def save_preset():
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(d, "Préréglage", "Nom du préréglage :", text=preset.currentData() or "")
+        name = (name or "").strip()[:40]
+        if not ok or not name:
+            return
+        allp = presets()
+        allp[name] = snapshot()
+        db.set_setting(main.conn, "pmv_presets", json.dumps(allp, ensure_ascii=False))
+        fill_presets(name)
+
+    def del_preset():
+        k = preset.currentData()
+        if not k:
+            return
+        allp = presets()
+        allp.pop(k, None)
+        db.set_setting(main.conn, "pmv_presets", json.dumps(allp, ensure_ascii=False))
+        fill_presets()
+    fill_presets()
+    preset.currentIndexChanged.connect(apply_preset)
+    psave.clicked.connect(save_preset)
+    pdel.clicked.connect(del_preset)
+
     bar = QProgressBar(); bar.setVisible(False)
     status = QLabel(""); status.setStyleSheet("color:#8b8c99")
     lay.addWidget(bar); lay.addWidget(status)
     btns = QHBoxLayout(); btns.addStretch(1)
     close = QPushButton("Fermer"); go = QPushButton("Créer le PMV"); go.setDefault(True)
-    btns.addWidget(close); btns.addWidget(go)
+    bg = QPushButton("Continuer en arrière-plan"); bg.setVisible(False)
+    bg.setToolTip("Ferme la fenêtre : le rendu continue, son avancement s'affiche en bas à gauche de l'accueil")
+    bg.clicked.connect(d.hide)
+    btns.addWidget(bg); btns.addWidget(close); btns.addWidget(go)
     lay.addLayout(btns)
     state = {"job": None}
 
@@ -657,13 +1350,28 @@ def PmvDialog(main, vids=None, source=None):
             return
         kind, ident = src.currentData()
         status.setText("Préparation des vidéos…")
+        flt = defin.currentData() or "all"
+        db.set_setting(main.conn, "pmv_def", flt)
+
+        def def_progress(i, n):
+            from PySide6.QtWidgets import QApplication
+            status.setText("Lecture de la définition des vidéos… %d / %d" % (i, n))
+            QApplication.processEvents()
         if kind in ("moments", "hot"):
             pool = fixed_pool(main, kind)
+            if flt != "all":
+                good = set(definition.keep(main, list(dict.fromkeys(p["vid"] for p in pool)), flt, def_progress))
+                pool = [p for p in pool if p["vid"] in good]
         else:
             ids = list(ident) if kind == "ids" else source_ids(main, kind, ident)
+            if flt != "all":
+                ids = definition.keep(main, ids, flt, def_progress)
             pool = build_pool(main, ids)
+        status.setText("")
         if not pool:
-            QMessageBox.information(d, "PMV", "Aucune vidéo utilisable (fichiers introuvables ou trop courts).")
+            QMessageBox.information(d, "PMV", "Aucune vidéo utilisable (fichiers introuvables ou trop courts)."
+                                    + ("\nAucune vidéo de cette définition dans ce choix : essaie « Toutes »."
+                                       if flt != "all" else ""))
             return
         folder = outdir.text().strip()
         try:
@@ -680,14 +1388,42 @@ def PmvDialog(main, vids=None, source=None):
         name = "PMV Phoque Al - %s - %s.mp4" % (base, time.strftime("%Y-%m-%d %Hh%M"))
         name = "".join(ch for ch in name if ch not in '<>:"/\\|?*')
         db.set_setting(main.conn, "pmv_style", style.currentData())
+        db.set_setting(main.conn, "pmv_words", words.text().strip())
+        db.set_setting(main.conn, "pmv_sfx", "1" if sfx.isChecked() else "0")
+        db.set_setting(main.conn, "pmv_title", title.text().strip())
         opts = {"minutes": length.currentData(), "mode": mode.currentData(), "style": style.currentData(),
                 "fx": {k: c.isChecked() for k, c in boxes.items()}, "look": look.isChecked(),
                 "intensity": inten.currentData(), "size": qual.currentData(), "fps": 30,
-                "workers": max(2, min(4, (os.cpu_count() or 4) // 2)), "seed": random.randrange(10 ** 9)}
-        job = Render(ffmpeg, mpath, pool, os.path.join(folder, name), opts, conn_factory=db.connect)
+                "workers": max(2, min(4, (os.cpu_count() or 4) // 2)), "seed": random.randrange(10 ** 9),
+                "words": [w for w in words.text().split(",") if w.strip()], "title": title.text().strip(),
+                "sfx": sfx.isChecked()}
+        n = versions.currentData() or 1
+        jobs = []
+        for v in range(n):
+            o2 = dict(opts, seed=opts["seed"] + v * 7919)
+            nm = name if n == 1 else name.replace(".mp4", " - v%d.mp4" % (v + 1))
+            jobs.append(Render(ffmpeg, mpath, pool, os.path.join(folder, nm), o2, conn_factory=db.connect))
+        db.set_setting(main.conn, "pmv_preview", "1" if preview.isChecked() else "0")
+        if preview.isChecked():
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import Qt as _Qt
+            QApplication.setOverrideCursor(_Qt.WaitCursor)
+            try:
+                for j in jobs:
+                    j.plan()
+            except Exception as e:
+                QApplication.restoreOverrideCursor()
+                QMessageBox.warning(d, "PMV", "Échec : %s" % e)
+                return
+            QApplication.restoreOverrideCursor()
+            if not review_dialog(d, main, jobs[0]):
+                status.setText("")
+                return
+        job = Batch(jobs)
         state["job"] = job
+        RUNNING.append(job)
         threading.Thread(target=job.run, daemon=True).start()
-        go.setEnabled(False); close.setText("Annuler"); bar.setVisible(True)
+        go.setEnabled(False); close.setText("Annuler"); bar.setVisible(True); bg.setVisible(True)
         timer.start(300)
 
     def poll():
@@ -700,12 +1436,13 @@ def PmvDialog(main, vids=None, source=None):
             return
         timer.stop()
         state["job"] = None
-        go.setEnabled(True); close.setText("Fermer")
+        go.setEnabled(True); close.setText("Fermer"); bg.setVisible(False)
         if job.error:
             status.setText("Échec : %s" % job.error)
             return
         r = job.result
-        status.setText("Terminé : %d coupes, %.0f s, %.0f BPM — %s" % (r["segments"], r["dur"], r["bpm"], os.path.basename(r["path"])))
+        status.setText("Terminé : %d coupes, %.0f s, %.0f BPM — %s" % (r["segments"], r["dur"], r["bpm"], os.path.basename(r["path"]))
+                       + ("  (+%d autre(s) version(s))" % (len(job.jobs) - 1) if len(job.jobs) > 1 else ""))
         main.status.setText("PMV créé : %s" % r["path"])
         if rescan.isChecked():
             try:

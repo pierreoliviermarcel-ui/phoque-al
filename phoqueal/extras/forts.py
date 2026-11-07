@@ -142,6 +142,7 @@ class Worker:
         self.stopping = False
         self.thread = threading.Thread(target=lambda: safe(self.run), daemon=True)
         self.done_n = 0
+        self.current = None          # vidéo en cours d'analyse (panneau des traitements)
 
     def start(self):
         self.thread.start()
@@ -188,11 +189,14 @@ class Worker:
                 # disque debranche : on reessaiera plus tard (rien n'est enregistre)
                 time.sleep(10)
                 continue
+            self.current = vid
             try:
                 found = analyse(ffmpeg, path)
             except Exception as e:
                 log("passages forts %s : %r" % (vid, e))
                 found = []
+            finally:
+                self.current = None
             conn.execute("DELETE FROM hot WHERE video_id=?", (vid,))
             conn.executemany("INSERT INTO hot(video_id, t0, t1, score) VALUES (?,?,?,?)",
                              [(vid, a, b, s) for a, b, s in found])

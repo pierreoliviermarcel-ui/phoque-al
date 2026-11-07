@@ -1,0 +1,37 @@
+name: Android remote app
+on:
+  push:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Build
+        run: gradle assembleRelease --no-daemon
+      - run: cp app/build/outputs/apk/release/app-release.apk ../PhoqueAl-Remote.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoqueAl-Remote-apk
+          path: PhoqueAl-Remote.apk
+      - name: Publish
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-${{ github.run_number }}
+          name: Android remote app (build ${{ github.run_number }})
+          body: "Phone remote for Phoque Al: finds the PC automatically, full screen, volume buttons. Install PhoqueAl-Remote.apk on the phone (allow unknown apps)."
+          files: PhoqueAl-Remote.apk

@@ -60,6 +60,7 @@ class SceneWorker(QThread):
         self.background = False
         self.wake = threading.Event()
         self.lock = threading.Lock()
+        self.current = None          # vidéo en cours d'analyse (panneau des traitements)
 
     def request(self, vid):
         if not vid or vid < 0:
@@ -107,11 +108,14 @@ class SceneWorker(QThread):
                 conn.execute("INSERT OR REPLACE INTO scenes_done(video_id, n, done_at) VALUES (?,?,?)", (vid, -1, 0))
                 conn.commit()
                 continue
+            self.current = vid
             try:
                 times = detect(ffmpeg, os.path.join(root, r["rel_path"]))
             except Exception as e:
                 log("scenes %s : %r" % (vid, e))
                 times = []
+            finally:
+                self.current = None
             conn.execute("DELETE FROM scenes WHERE video_id=?", (vid,))
             conn.executemany("INSERT INTO scenes(video_id, t) VALUES (?,?)", [(vid, t) for t in times])
             conn.execute("INSERT OR REPLACE INTO scenes_done(video_id, n, done_at) VALUES (?,?,?)",

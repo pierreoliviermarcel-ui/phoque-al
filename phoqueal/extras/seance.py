@@ -4,6 +4,9 @@
   au rythme (1 coupe tous les 4, 2 ou 1 temps), la durée minimale d'un extrait et le volume.
 - Vidéos : une sélection (playlist, thème, tag, coups de cœur…), sur tous les écrans ou l'écran principal.
 - Minuteur discret, pauses automatiques en option, fin en douceur.
+- v2.6 : les vidéos suivent la phase (calmes en phase calme, passages forts en phase intense, d'après
+  l'analyse des passages forts et des tags choisis) ; pendant STOP, vidéos calmes en continu au lieu d'une pause ;
+  annonce néon de chaque phase avec une phrase d'encouragement (réglables dans « POP mode… → Phrases »).
 - Commandes : ⋯ → Séance, Ctrl+Maj+S (démarrer / arrêter), Ctrl+Maj+P (pause), Ctrl+Maj+N (phase suivante),
   téléphone (onglet Musique).
 """
@@ -16,7 +19,12 @@ from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication
 
 from .. import db
+from . import neonstyle as ns
 from .common import log, safe
+
+# intensité attendue des vidéos selon la phase : 0 calme … 3 intense
+LEVEL = {"Calme": 0, "Redescente": 0, "Stop": 0, "Ralentis": 1, "Montée": 2, "Monte": 2, "Rapide": 2,
+         "Intense": 3, "Final": 3}
 
 # (nom, part de la durée, coupe tous les N temps, extrait minimum en s, volume musique relatif)
 PRESETS = {
@@ -151,6 +159,51 @@ def source_ids(conn, kind, ident):
 
 
 # ----------------------------------------------------------------------------------------
+# Intensité des vidéos (passages forts + tags)
+# ----------------------------------------------------------------------------------------
+def tag_ids(conn, names):
+    names = [n.strip() for n in (names or "").split(",") if n.strip()]
+    out = set()
+    for n in names:
+        try:
+            out.update(r[0] for r in conn.execute(
+                "SELECT vt.video_id FROM video_tags vt JOIN tags t ON t.id=vt.tag_id "
+                "WHERE t.name=? COLLATE NOCASE AND vt.manual>=0", (n,)))
+        except Exception:
+            pass
+    return out
+
+
+def intensity(conn, ids):
+    """-> (calmes, intenses, passages) : ensembles de vidéos et {vid: [(t0, t1, score)]}."""
+    ids = set(ids)
+    hot, done, dur = {}, set(), {}
+    try:
+        for r in conn.execute("SELECT video_id, t0, t1, score FROM hot ORDER BY video_id, t0"):
+            if r[0] in ids:
+                hot.setdefault(r[0], []).append((r[1], r[2], r[3]))
+        done = {r[0] for r in conn.execute("SELECT video_id FROM hot_done") if r[0] in ids}
+        dur = {r[0]: (r[1] or 0) for r in conn.execute("SELECT id, duration FROM videos WHERE missing=0") if r[0] in ids}
+    except Exception as e:
+        log("séance intensité : %r" % e)
+    dens = {}
+    for v in done:
+        d = max(30.0, dur.get(v, 0) or 0)
+        dens[v] = sum((b - a) * sc for a, b, sc in hot.get(v, [])) / d
+    calm, strong = set(), set()
+    if len(dens) >= 4:
+        vals = sorted(dens.values())
+        lo, hi = vals[int(len(vals) * 0.4)], vals[int(len(vals) * 0.6)]
+        calm = {v for v, x in dens.items() if x <= lo}
+        strong = {v for v, x in dens.items() if x >= hi}
+    tc = tag_ids(conn, S(conn, "calm_tags", ""))
+    th = tag_ids(conn, S(conn, "hot_tags", ""))
+    calm = (calm | (tc & ids)) - th
+    strong = (strong | (th & ids)) - tc
+    return calm, strong, hot
+
+
+# ----------------------------------------------------------------------------------------
 # Séance
 # ----------------------------------------------------------------------------------------
 class Session:
@@ -165,6 +218,9 @@ class Session:
         self.idx = -1
         self.ending = None
         self.announce = 0.0
+        self.ann_t0 = 0.0
+        self.phrase = ""
+        self.calm, self.strong, self.hot = set(), set(), {}
         mt = main.montage
         self.saved = {"every": mt.every, "min_dur": mt.min_dur, "montage": main.montage_btn.isChecked(),
                       "volume": main.music.volume}
@@ -175,6 +231,11 @@ class Session:
     # --- demarrage
     def start(self):
         m = self.main
+        if self.cfg.get("follow", True):
+            try:
+                self.calm, self.strong, self.hot = intensity(m.conn, self.ids)
+            except Exception as e:
+                log("séance intensité : %r" % e)
         ids = list(self.ids)
         random.shuffle(ids)
         if self.cfg["screens"] == "main":
@@ -200,7 +261,7 @@ class Session:
         if self.cfg.get("hud", True):
             self.make_hud()
         self.last = time.monotonic()
-        self.timer.start(250)
+        self.timer.start(100)
         self.tick()
         m.status.setText("Séance démarrée")
 
@@ -216,10 +277,10 @@ class Session:
     def place_hud(self, big):
         g = self.hud_screen.geometry()
         if big:
-            w, h = 560, 170
-            self.hud.setGeometry(g.x() + (g.width() - w) // 2, g.y() + (g.height() - h) // 2, w, h)
+            w, h = min(1100, g.width() - 40), 380
+            self.hud.setGeometry(g.x() + (g.width() - w) // 2, g.y() + int(g.height() * 0.44) - h // 2, w, h)
         else:
-            w, h = 300, 64
+            w, h = 440, 62
             self.hud.setGeometry(g.x() + g.width() - w - 24, g.y() + 24, w, h)
 
     # --- horloge
@@ -251,6 +312,8 @@ class Session:
             self.place_hud(False)
         if self.phases[self.idx][0] == "Stop" and self.hud is not None:
             self.announce = now + 9999
+        if self.announce and self.hud is not None and now - self.ann_t0 < 0.6:
+            self.update_hud()
         if self.next_pause is not None and self.elapsed >= self.next_pause:
             self.next_pause += self.cfg["pause_every"] * 60
             self.pause(self.cfg["pause_len"])
@@ -261,17 +324,27 @@ class Session:
         self.idx = i
         name, _a, _b, every, mind, vol = self.phases[i]
         m = self.main
-        if name == "Stop":
-            m.ctrl.each(lambda p: p.set_pause(True))
-        elif prev == "Stop":
-            m.ctrl.each(lambda p: p.set_pause(False))
-        if name in EDGE and name != prev and self.hud is not None:
-            self.announce = time.monotonic() + (9999 if name == "Stop" else 3.5)
-            self.place_hud(True)
+        calm_stop = self.cfg.get("stop_mode", "calm") == "calm"
         mt = self.main.montage
         mt.every = every
         mt.min_dur = mind
         mt.next_i = 0
+        if name == "Stop":
+            if calm_stop:
+                self.calm_videos()
+            else:
+                m.ctrl.each(lambda p: p.set_pause(True))
+        elif prev == "Stop":
+            if calm_stop:
+                self.set_rate(1.0)
+            else:
+                m.ctrl.each(lambda p: p.set_pause(False))
+        if name != prev and self.hud is not None:
+            key = ns.KEY.get(name, "")
+            self.phrase = ns.pick_phrase(m.conn, key, self.phrase) if key else ""
+            self.ann_t0 = time.monotonic()
+            self.announce = self.ann_t0 + (9999 if name == "Stop" else 3.5)
+            self.place_hud(True)
         self.ramp_to(self.saved["volume"] * vol)
         try:
             from . import rythme
@@ -280,6 +353,70 @@ class Session:
                 e.e_glitch = name in ("Intense", "Rapide") or e.e_glitch
         except Exception:
             pass
+
+    def level(self):
+        if self.idx < 0 or not self.cfg.get("follow", True):
+            return None
+        return LEVEL.get(self.phases[self.idx][0])
+
+    def set_rate(self, r):
+        for pw in self.main.montage.players():
+            try:
+                pw.player.set_rate(r)
+            except Exception:
+                pass
+
+    def calm_videos(self):
+        """STOP : chaque écran passe sur une vidéo calme, sans coupe, un peu ralentie."""
+        mt = self.main.montage
+        for pw in mt.players():
+            try:
+                picked = mt.pick_next(pw)
+                if picked:
+                    row, path, start = picked
+                    pw.load(row["id"], path, row["title"], start)
+                    QTimer.singleShot(600, lambda pw=pw: safe(lambda: pw.player.set_rate(0.9)))
+            except Exception as e:
+                log("séance stop : %r" % e)
+
+    def pick(self, mt, pw):
+        """Vidéo et moment de départ selon l'intensité de la phase (None : choix habituel)."""
+        lv = self.level()
+        ids = self.ids
+        showing = {p.video_id for p in mt.players()}
+        if lv is not None and (self.calm or self.strong):
+            if lv == 0:
+                pool = [i for i in ids if i in self.calm]
+            elif lv == 1:
+                pool = [i for i in ids if i not in self.strong]
+            elif lv == 3:
+                pool = [i for i in ids if i in self.strong]
+            else:
+                pool = list(ids)
+            ids = pool or ids
+        choices = [i for i in ids if i not in showing] or ids
+        for _ in range(10):
+            vid = random.choice(choices)
+            row, path = mt.ctrl.resolve(vid)
+            if not path:
+                continue
+            dur = row["duration"] or 0
+            room = dur - mt.min_dur * 2 - 5
+            passages = [h for h in self.hot.get(vid, []) if h[0] < room]
+            if lv is not None and lv >= 2 and passages:
+                a, _b, _sc = random.choice(sorted(passages, key=lambda h: -h[2])[:6])
+                return row, path, max(0.0, a - 0.5)
+            if dur > mt.min_dur * 2 + 10:
+                start = random.uniform(0.2 * dur, max(0.2 * dur, room))
+                if lv is not None and lv <= 1 and passages:
+                    for _k in range(8):                    # éviter les passages forts en phase calme
+                        if not any(a - 3 <= start <= b + 3 for a, b, _s in passages):
+                            break
+                        start = random.uniform(0.2 * dur, max(0.2 * dur, room))
+            else:
+                start = 0
+            return row, path, start
+        return None
 
     def ramp_to(self, target, secs=5.0):
         start = self.main.music.mp.audio_get_volume()
@@ -346,6 +483,7 @@ class Session:
         if m.montage_btn.isChecked() != self.saved["montage"]:
             m.montage_btn.setChecked(self.saved["montage"])
         self.set_music(self.saved["volume"])
+        self.set_rate(1.0)
         if self.hud is not None:
             self.hud.close()
             self.hud = None
@@ -359,54 +497,67 @@ class Session:
             self.hud.update()
 
     def paint_hud(self, p, w):
+        from PySide6.QtCore import QPointF
         W, H = w.width(), w.height()
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(10, 8, 20, 170))
-        p.drawRoundedRect(QRectF(0, 0, W, H), 14, 14)
+        now = time.monotonic()
         name = self.phases[self.idx][0] if self.idx >= 0 else ""
-        f = QFont("Segoe UI", 10)
+        key = ns.KEY.get(name, "")
+        word, col, ico = ns.PHASES.get(key, (name.upper(), "#ffffff", "star"))
+        word = ns.tr(word)
         if self.paused_until is not None:
-            left = "" if self.paused_until == "manual" else "  ·  reprise dans " + fmt(self.paused_until - time.monotonic())
-            f.setPixelSize(40); f.setBold(True); p.setFont(f)
-            p.setPen(QColor("#22f3ff"))
-            p.drawText(QRectF(0, 18, W, 60), Qt.AlignCenter, "PAUSE")
-            f.setPixelSize(17); f.setBold(False); p.setFont(f)
-            p.setPen(QColor(236, 232, 255, 220))
-            p.drawText(QRectF(0, 86, W, 30), Qt.AlignCenter, "Séance : %s%s" % (fmt(self.elapsed), left))
-            p.drawText(QRectF(0, 116, W, 30), Qt.AlignCenter, "Ctrl+Maj+P pour reprendre")
+            word, col, ico = ns.tr("PAUSE"), "#3ee8ff", "slow"
+        if H > 120:                                             # annonce en grand
+            a = min(1.0, (now - self.ann_t0) / 0.45) if self.paused_until is None else 1.0
+            if self.announce and self.announce - now < 0.5 and self.paused_until is None and name != "Stop":
+                a = min(a, max(0.0, (self.announce - now) / 0.5))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(4, 3, 10, int(110 * a)))
+            p.drawPath(ns.cut_corners(QRectF(0, 0, W, H), 36))
+            ns.icon(p, ico, QRectF(W / 2 - 18, 18, 36, 36), col, a)
+            scale = 1.0 + 0.12 * max(0.0, 1.0 - (now - self.ann_t0) / 0.45) if self.paused_until is None else 1.0
+            f = ns.font("title", 128 * scale if len(word) <= 7 else 96 * scale, spacing=112)
+            ns.glow_text(p, QRectF(0, 50, W, 170), word, f, col, glow=4, alpha=a)
+            if self.paused_until is not None:
+                left = "" if self.paused_until == "manual" else ns.tr("reprise dans %s") % fmt(self.paused_until - now)
+                sub, low = ns.tr("Séance : %s") % fmt(self.elapsed), left or ns.tr("Ctrl+Maj+P pour reprendre")
+            else:
+                sub = self.phrase
+                low = (ns.tr("REPRISE DANS  %s") % fmt(self.phases[self.idx][2] - self.elapsed)) if name == "Stop" else ""
+            if sub:
+                ns.glow_text(p, QRectF(0, 226, W, 60), sub, ns.font("text", 44), col, glow=2, alpha=a)
+            if low:
+                f2 = ns.font("title_bold", 24, spacing=140)
+                c = QColor(col); c.setAlphaF(a)
+                p.setPen(c); p.setFont(f2)
+                p.drawText(QRectF(0, 300, W, 40), Qt.AlignCenter, low)
             return
+        # rappel discret : phase, progression de la séance, temps
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(5, 5, 10, 150))
+        p.drawPath(ns.cut_corners(QRectF(0, 0, W, H), 12))
+        p.setBrush(QColor(col))
+        p.drawRect(QRectF(0, 0, 3, H))
+        ns.icon(p, ico, QRectF(14, H / 2 - 11, 22, 22), col)
+        f = ns.font("title_bold", 16, spacing=118)
+        tw = ns.glow_text(p, QRectF(46, 0, W, H), word, f, col, align=Qt.AlignLeft | Qt.AlignVCenter, glow=2)
         total = self.phases[-1][2] if self.cfg["minutes"] else None
-        if H > 100 and name in EDGE:
-            a, b = self.phases[self.idx][1], self.phases[self.idx][2]
-            col = {"Monte": "#ff2bd6", "Ralentis": "#8a5cff", "Stop": "#22f3ff", "Final": "#ffe94d"}[name]
-            f.setPixelSize(54); f.setBold(True); p.setFont(f)
-            p.setPen(QColor(col))
-            p.drawText(QRectF(0, 14, W, 74), Qt.AlignCenter, EDGE[name])
-            f.setPixelSize(18); f.setBold(False); p.setFont(f)
-            p.setPen(QColor(236, 232, 255, 220))
-            sub = {"Monte": "accélère", "Ralentis": "lentement", "Stop": "on ne touche plus — reprise dans " +
-                   fmt(b - self.elapsed), "Final": "jusqu'au bout"}[name]
-            p.drawText(QRectF(0, 96, W, 30), Qt.AlignCenter, sub)
-            p.setBrush(QColor(255, 255, 255, 40)); p.setPen(Qt.NoPen)
-            p.drawRoundedRect(QRectF(40, 140, W - 80, 6), 3, 3)
-            k = max(0.0, min(1.0, (self.elapsed - a) / max(1.0, b - a)))
-            p.setBrush(QColor(col)); p.drawRoundedRect(QRectF(40, 140, (W - 80) * k, 6), 3, 3)
-            return
-        f.setPixelSize(17); f.setBold(True); p.setFont(f)
-        col = {"Calme": "#22f3ff", "Montée": "#8a5cff", "Rapide": "#ff9b3d", "Intense": "#ff2bd6",
-               "Redescente": "#7fd1ae", "Monte": "#ff2bd6", "Ralentis": "#8a5cff", "Stop": "#22f3ff",
-               "Final": "#ffe94d"}.get(name, "#ffffff")
-        p.setPen(QColor(col))
-        p.drawText(QRectF(16, 8, W - 32, 26), Qt.AlignLeft | Qt.AlignVCenter, name.upper())
-        f.setBold(False); p.setFont(f)
-        p.setPen(QColor(236, 232, 255, 230))
         txt = fmt(self.elapsed) + (" / " + fmt(total) if total else "")
-        p.drawText(QRectF(16, 8, W - 32, 26), Qt.AlignRight | Qt.AlignVCenter, txt)
-        # barre de progression de la phase
-        a, b = self.phases[self.idx][1], self.phases[self.idx][2]
-        k = max(0.0, min(1.0, (self.elapsed - a) / max(1.0, b - a)))
-        p.setBrush(QColor(255, 255, 255, 40)); p.drawRoundedRect(QRectF(16, 42, W - 32, 6), 3, 3)
-        p.setBrush(QColor(col)); p.drawRoundedRect(QRectF(16, 42, (W - 32) * k, 6), 3, 3)
+        tf = ns.font("title_bold", 13)
+        from PySide6.QtGui import QFontMetricsF
+        txt_w = QFontMetricsF(tf).horizontalAdvance(txt)
+        x = 46 + tw + 14
+        room = W - 16 - txt_w - 12 - x                       # place libre entre le mot et l'heure
+        if total and room > 40:
+            step = min(17.0, room / 8)
+            k = max(0.0, min(1.0, self.elapsed / max(1.0, total)))
+            for i in range(8):
+                on = (i + 0.5) / 8 <= k
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(col) if on else QColor(255, 255, 255, 38))
+                p.drawRect(QRectF(x + i * step, H / 2 - 3, step - 4, 5))
+        p.setFont(tf)
+        p.setPen(QColor(205, 205, 220))
+        p.drawText(QRectF(0, 0, W - 16, H), Qt.AlignRight | Qt.AlignVCenter, txt)
 
 
 # ----------------------------------------------------------------------------------------
@@ -425,15 +576,22 @@ def start_from_settings(main):
     begin(main, cfg)
 
 
+def cannot_start(main, cfg):
+    """Raison pour laquelle la séance ne peut pas démarrer ("" si tout va bien)."""
+    if not main.music.files:
+        return "aucune musique trouvée. Choisis un dossier de musique (le disque qui la contient est peut-être débranché)."
+    if not source_ids(main.conn, *cfg["source"]):
+        return "aucune vidéo dans cette sélection (disque débranché ou sélection vide)."
+    return ""
+
+
 def begin(main, cfg):
     global SESSION
-    if not main.music.files:
-        main.status.setText("Séance : choisis d'abord un dossier de musique (bouton « Dossier musique… »)")
+    why = cannot_start(main, cfg)
+    if why:
+        main.status.setText("Séance : " + why)
         return False
     ids = source_ids(main.conn, *cfg["source"])
-    if not ids:
-        main.status.setText("Séance : aucune vidéo dans cette sélection")
-        return False
     if SESSION is not None:
         SESSION.finish()
     SESSION = Session(main, cfg, ids)
@@ -510,10 +668,24 @@ def SeanceDialog(main):
     f.addRow("Pauses automatiques", row)
     frise = QCheckBox("Afficher la frise néon (vidéos pmv et montage)")
     frise.setChecked(cfg.get("frise", True))
-    hud = QCheckBox("Minuteur et phase en haut à droite de l'écran principal")
+    hud = QCheckBox("Annonces néon des phases et minuteur (écran principal)")
     hud.setChecked(cfg.get("hud", True))
     f.addRow("", frise)
     f.addRow("", hud)
+    follow = QCheckBox("Vidéos choisies selon la phase (calmes / passages forts)")
+    follow.setChecked(cfg.get("follow", True))
+    follow.setToolTip("D'après l'analyse des passages forts (⋯ → Écrans et lecture → Passages forts) et les tags ci-dessous")
+    f.addRow("", follow)
+    stopm = combo([("Vidéos calmes en continu", "calm"), ("Pause de la lecture (comme avant)", "pause")],
+                  cfg.get("stop_mode", "calm"))
+    f.addRow("Pendant STOP", stopm)
+    from PySide6.QtWidgets import QLineEdit
+    tcalm = QLineEdit(S(conn, "calm_tags", ""))
+    tcalm.setPlaceholderText("ex. : doux, lent (séparés par des virgules)")
+    thot = QLineEdit(S(conn, "hot_tags", ""))
+    thot.setPlaceholderText("ex. : intense (séparés par des virgules)")
+    f.addRow("Tags « calmes »", tcalm)
+    f.addRow("Tags « intenses »", thot)
     info = QLabel("La musique en cours (ou le dossier de musique) donne le rythme ; chaque phase règle la vitesse "
                   "des coupes et le volume.<br>Ctrl+Maj+S : démarrer / arrêter · Ctrl+Maj+P : pause · "
                   "Ctrl+Maj+N : phase suivante · téléphone : onglet Musique.")
@@ -533,8 +705,21 @@ def SeanceDialog(main):
     def go():
         c = {"source": list(src.currentData()), "preset": preset.currentData(), "minutes": mins.currentData(),
              "screens": scr.currentData(), "pause_every": pe.currentData(), "pause_len": pl.currentData(),
-             "frise": frise.isChecked(), "hud": hud.isChecked()}
+             "frise": frise.isChecked(), "hud": hud.isChecked(), "follow": follow.isChecked(),
+             "stop_mode": stopm.currentData()}
+        setS(conn, "calm_tags", tcalm.text().strip())
+        setS(conn, "hot_tags", thot.text().strip())
         setS(conn, "cfg", json.dumps(c))
+        from PySide6.QtWidgets import QMessageBox
+        why = cannot_start(main, c)
+        if why and not main.music.files:
+            r = QMessageBox.question(d, "Séance", "Impossible de démarrer : " + why + "\n\nChoisir un dossier de musique maintenant ?")
+            if r == QMessageBox.Yes:
+                safe(main.choose_music_folder)
+            why = cannot_start(main, c)
+        if why:
+            QMessageBox.information(d, "Séance", "Impossible de démarrer : " + why)
+            return
         if begin(main, c):
             d.accept()
     b_go.clicked.connect(go)
@@ -579,16 +764,12 @@ def install(main):
         def pick_next(self, pw):
             s = SESSION
             if s is not None and s.ids and not getattr(pw, "is_tile", False):
-                showing = {p.video_id for p in self.players()}
-                choices = [i for i in s.ids if i not in showing] or s.ids
-                for _ in range(10):
-                    vid = random.choice(choices)
-                    row, path = self.ctrl.resolve(vid)
-                    if path:
-                        dur = row["duration"] or 0
-                        start = random.uniform(0.2 * dur, max(0.2 * dur, dur - self.min_dur * 2 - 5)) \
-                            if dur > self.min_dur * 2 + 10 else 0
-                        return row, path, start
+                try:
+                    got = s.pick(self, pw)
+                    if got:
+                        return got
+                except Exception as e:
+                    log("séance choix : %r" % e)
             return orig_pick(self, pw)
         Montage.pick_next = pick_next
         Montage._extras_seance = True
