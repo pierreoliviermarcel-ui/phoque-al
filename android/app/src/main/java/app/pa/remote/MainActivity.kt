@@ -30,9 +30,14 @@ import java.net.DatagramSocket
 import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.Socket
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.util.Collections
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
@@ -153,7 +158,11 @@ class MainActivity : Activity() {
         searching = true
         showOverlay("Recherche du PC sur le réseau…", true)
         thread {
-            val found = scan()
+            var found = scan()
+            if (found.isEmpty()) {
+                ui.post { showOverlay("Recherche approfondie du PC…\n(partage de connexion : quelques secondes)", true) }
+                found = sweep()
+            }
             ui.post {
                 searching = false
                 when {
@@ -267,6 +276,59 @@ class MainActivity : Activity() {
             }
         }
         return found.values.toList()
+    }
+
+    /**
+     * Recherche directe : essaie le port de la télécommande sur chaque adresse des réseaux du téléphone.
+     * Indispensable quand le téléphone fait lui-même le partage de connexion : Android y envoie mal les
+     * messages « es-tu là ? », alors qu'une connexion directe passe très bien.
+     */
+    private fun sweep(): List<Pc> {
+        val ports = LinkedHashSet<Int>()
+        val prefixes = LinkedHashSet<String>()
+        val last = prefs.getString("url", "")?.removePrefix("http://")?.trimEnd('/') ?: ""
+        if (last.contains(".")) {
+            val host = last.substringBefore(":")
+            last.substringAfter(":", "").toIntOrNull()?.let { ports.add(it) }
+            if (host.count { it == '.' } == 3) prefixes.add(host.substringBeforeLast("."))
+        }
+        ports.add(8765)
+        try {
+            for (ni in NetworkInterface.getNetworkInterfaces()) {
+                if (!ni.isUp || ni.isLoopback) continue
+                for (ia in ni.interfaceAddresses) {
+                    val a = ia.address as? Inet4Address ?: continue
+                    if (a.isSiteLocalAddress) prefixes.add(a.hostAddress!!.substringBeforeLast("."))
+                }
+            }
+        } catch (_: Exception) {
+        }
+        prefixes.add("192.168.43")                 // partage de connexion Android classique
+        val own = HashSet<String>()
+        try {
+            for (ni in NetworkInterface.getNetworkInterfaces()) for (ia in ni.interfaceAddresses)
+                (ia.address as? Inet4Address)?.hostAddress?.let { own.add(it) }
+        } catch (_: Exception) {
+        }
+        val found = Collections.synchronizedList(ArrayList<Pc>())
+        for (prefix in prefixes) {
+            val pool = Executors.newFixedThreadPool(48)
+            for (i in 1..254) for (port in ports) {
+                val host = "$prefix.$i"
+                if (host in own) continue
+                pool.execute {
+                    try {
+                        Socket().use { it.connect(InetSocketAddress(host, port), 450) }
+                        if (reachable("http://$host:$port/")) found.add(Pc(host, host, port))
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            pool.shutdown()
+            pool.awaitTermination(15, TimeUnit.SECONDS)
+            if (found.isNotEmpty()) break
+        }
+        return found.distinctBy { "${it.host}:${it.port}" }
     }
 
     private fun reachable(url: String): Boolean = try {
