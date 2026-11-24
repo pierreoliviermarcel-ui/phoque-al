@@ -16,6 +16,7 @@ import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -54,6 +55,32 @@ class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("remote", Context.MODE_PRIVATE) }
     private var searching = false
+    private var lost = 0
+
+    /** Nouvel essai automatique tant que le PC n'est pas trouvé (plus de page bloquée). */
+    private val autoRetry = Runnable { if (overlay.visibility == View.VISIBLE && !searching) discover(auto = true) }
+
+    /** Surveillance : si le PC ne répond plus (logiciel fermé, relancé, adresse changée), on le recherche. */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            val url = prefs.getString("url", null)
+            if (url != null && overlay.visibility != View.VISIBLE && !searching) {
+                thread {
+                    val ok = reachable(url)
+                    ui.post {
+                        lost = if (ok) 0 else lost + 1
+                        if (lost >= 2) {
+                            lost = 0
+                            showOverlay("Connexion au PC perdue…
+Nouvelle recherche.", true)
+                            discover(auto = true)
+                        }
+                    }
+                }
+            }
+            ui.postDelayed(this, 5000)
+        }
+    }
 
     data class Pc(val name: String, val host: String, val port: Int) {
         fun url() = "http://$host:$port/"
@@ -82,7 +109,14 @@ class MainActivity : Activity() {
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
-                    ui.post { discover(auto = true) }
+                    ui.post { showOverlay("PC injoignable…\nNouvelle recherche.", true); discover(auto = true) }
+                }
+            }
+
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                // page d'erreur (« Not Found »…) : ce n'est pas la télécommande, on cherche le bon PC
+                if (request.isForMainFrame) {
+                    ui.post { showOverlay("Réponse inattendue de ${request.url.host}…\nNouvelle recherche.", true); discover(auto = true) }
                 }
             }
         }
@@ -119,6 +153,7 @@ class MainActivity : Activity() {
         } else {
             discover(auto = true)
         }
+        ui.postDelayed(watchdog, 5000)
     }
 
     private fun button(text: String, action: () -> Unit): Button {
@@ -166,10 +201,14 @@ class MainActivity : Activity() {
             ui.post {
                 searching = false
                 when {
-                    found.isEmpty() -> showOverlay(
-                        "PC introuvable.\n\nSur le PC : ouvre le logiciel et active « Téléphone ». " +
-                            "Le téléphone et le PC doivent être sur le même réseau " +
-                            "(même Wi-Fi, ou le PC connecté au partage de connexion du téléphone).", false)
+                    found.isEmpty() -> {
+                        showOverlay(
+                            "PC introuvable — nouvel essai toutes les 5 s.\n\nSur le PC : ouvre le logiciel et active « Téléphone ». " +
+                                "Le téléphone et le PC doivent être sur le même réseau " +
+                                "(même Wi-Fi, ou le PC connecté au partage de connexion du téléphone).", true)
+                        ui.removeCallbacks(autoRetry)
+                        ui.postDelayed(autoRetry, 5000)
+                    }
                     found.size == 1 -> open(found[0])
                     else -> choose(found)
                 }
@@ -331,11 +370,12 @@ class MainActivity : Activity() {
         return found.distinctBy { "${it.host}:${it.port}" }
     }
 
+    /** Vrai seulement si c'est bien le logiciel qui répond (pas un autre appareil sur la même adresse). */
     private fun reachable(url: String): Boolean = try {
         val c = URL(url + "manifest.json").openConnection() as HttpURLConnection
         c.connectTimeout = 1500
         c.readTimeout = 1500
-        val ok = c.responseCode in 200..499
+        val ok = c.responseCode == 200 && c.inputStream.bufferedReader().use { it.readText() }.contains("start_url")
         c.disconnect()
         ok
     } catch (_: Exception) {
