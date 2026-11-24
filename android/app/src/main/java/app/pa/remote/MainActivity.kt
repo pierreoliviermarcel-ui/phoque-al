@@ -71,8 +71,7 @@ class MainActivity : Activity() {
                         lost = if (ok) 0 else lost + 1
                         if (lost >= 2) {
                             lost = 0
-                            showOverlay("Connexion au PC perdue…
-Nouvelle recherche.", true)
+                            showOverlay("Connexion au PC perdue…\nNouvelle recherche.", true)
                             discover(auto = true)
                         }
                     }
